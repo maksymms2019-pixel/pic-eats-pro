@@ -8,7 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { computeTargets, type Activity, type Goal, type Sex } from "@/lib/nutrition";
+import {
+  computeBreakdown,
+  type Activity,
+  type Goal,
+  type Sex,
+  type WorkoutType,
+  type MacroPreset,
+} from "@/lib/nutrition";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({ meta: [{ title: "Профіль — CalorAI" }] }),
@@ -44,6 +51,13 @@ function ProfilePage() {
   const [sex, setSex] = useState<Sex>("male");
   const [activity, setActivity] = useState<Activity>("moderate");
   const [goal, setGoal] = useState<Goal>("maintain");
+  const [bodyFat, setBodyFat] = useState<number | null>(null);
+  const [workoutType, setWorkoutType] = useState<WorkoutType>("none");
+  const [workoutFreq, setWorkoutFreq] = useState(0);
+  const [workoutDur, setWorkoutDur] = useState(45);
+  const [macroPreset, setMacroPreset] = useState<MacroPreset>("balanced");
+  const [proteinPerKg, setProteinPerKg] = useState<number | null>(null);
+  const [calorieDelta, setCalorieDelta] = useState<number | null>(null);
 
   useEffect(() => {
     if (!profile) return;
@@ -54,11 +68,28 @@ function ProfilePage() {
     setSex((profile.sex as Sex) ?? "male");
     setActivity((profile.activity as Activity) ?? "moderate");
     setGoal((profile.goal as Goal) ?? "maintain");
+    setBodyFat(profile.body_fat_pct != null ? Number(profile.body_fat_pct) : null);
+    setWorkoutType(((profile.workout_type as WorkoutType) ?? "none"));
+    setWorkoutFreq(Number(profile.workout_frequency ?? 0));
+    setWorkoutDur(Number(profile.workout_duration_min ?? 45));
+    setMacroPreset(((profile.macro_preset as MacroPreset) ?? "balanced"));
+    setProteinPerKg(profile.protein_per_kg != null ? Number(profile.protein_per_kg) : null);
+    setCalorieDelta(profile.calorie_delta != null ? Number(profile.calorie_delta) : null);
   }, [profile]);
 
   const save = async () => {
     if (!session) return;
-    const t = computeTargets({ sex, age, height_cm: height, weight_kg: weight, activity, goal });
+    const t = computeBreakdown({
+      sex, age, height_cm: height, weight_kg: weight, activity, goal,
+      bmr_method: bodyFat ? "katch" : "mifflin",
+      body_fat_pct: bodyFat,
+      workout_type: workoutType,
+      workout_frequency: workoutFreq,
+      workout_duration_min: workoutDur,
+      macro_preset: macroPreset,
+      protein_per_kg: proteinPerKg,
+      calorie_delta: calorieDelta,
+    });
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -69,6 +100,14 @@ function ProfilePage() {
         weight_kg: weight,
         activity,
         goal,
+        body_fat_pct: bodyFat,
+        bmr_method: bodyFat ? "katch" : "mifflin",
+        workout_type: workoutType,
+        workout_frequency: workoutFreq,
+        workout_duration_min: workoutDur,
+        macro_preset: macroPreset,
+        protein_per_kg: proteinPerKg,
+        calorie_delta: calorieDelta,
         target_calories: t.calories,
         target_protein_g: t.protein_g,
         target_carbs_g: t.carbs_g,
@@ -89,7 +128,17 @@ function ProfilePage() {
     navigate({ to: "/auth", replace: true });
   };
 
-  const t = computeTargets({ sex, age, height_cm: height, weight_kg: weight, activity, goal });
+  const t = computeBreakdown({
+    sex, age, height_cm: height, weight_kg: weight, activity, goal,
+    bmr_method: bodyFat ? "katch" : "mifflin",
+    body_fat_pct: bodyFat,
+    workout_type: workoutType,
+    workout_frequency: workoutFreq,
+    workout_duration_min: workoutDur,
+    macro_preset: macroPreset,
+    protein_per_kg: proteinPerKg,
+    calorie_delta: calorieDelta,
+  });
 
   return (
     <div className="space-y-5">
@@ -123,6 +172,23 @@ function ProfilePage() {
         <RangeRow label="Зріст" v={height} set={setHeight} min={100} max={230} suffix="см" />
         <RangeRow label="Вага" v={weight} set={(n) => setWeight(n)} min={30} max={250} step={0.1} suffix="кг" />
 
+        <div className="space-y-1">
+          <div className="flex items-baseline justify-between">
+            <Label>% жиру в тілі</Label>
+            <span className="font-semibold">{bodyFat ? `${bodyFat}%` : "не знаю"}</span>
+          </div>
+          <Input
+            type="range"
+            min={0}
+            max={50}
+            value={bodyFat ?? 0}
+            onChange={(e) => {
+              const v = parseInt(e.target.value);
+              setBodyFat(v === 0 ? null : v);
+            }}
+          />
+        </div>
+
         <div className="space-y-1.5">
           <Label>Активність</Label>
           <select
@@ -139,6 +205,26 @@ function ProfilePage() {
         </div>
 
         <div className="space-y-1.5">
+          <Label>Тренування</Label>
+          <select
+            value={workoutType}
+            onChange={(e) => setWorkoutType(e.target.value as WorkoutType)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="none">Немає</option>
+            <option value="strength">Силові</option>
+            <option value="cardio">Кардіо</option>
+            <option value="mixed">Змішане</option>
+          </select>
+          {workoutType !== "none" && (
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <RangeRow label="Раз/тижд" v={workoutFreq} set={setWorkoutFreq} min={0} max={14} />
+              <RangeRow label="Хв/сесія" v={workoutDur} set={setWorkoutDur} min={10} max={180} step={5} />
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
           <Label>Ціль</Label>
           <select
             value={goal}
@@ -149,6 +235,59 @@ function ProfilePage() {
             <option value="maintain">Підтримувати</option>
             <option value="gain">Набрати</option>
           </select>
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-baseline justify-between">
+            <Label>Дефіцит/профіцит</Label>
+            <span className="font-semibold">
+              {calorieDelta !== null
+                ? `${calorieDelta > 0 ? "+" : ""}${calorieDelta} ккал`
+                : "за замовч."}
+            </span>
+          </div>
+          <Input
+            type="range"
+            min={-1000}
+            max={500}
+            step={50}
+            value={calorieDelta ?? 0}
+            onChange={(e) => setCalorieDelta(parseInt(e.target.value))}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Макро-пресет</Label>
+          <select
+            value={macroPreset}
+            onChange={(e) => setMacroPreset(e.target.value as MacroPreset)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="balanced">Збалансовано</option>
+            <option value="high_protein">Високий білок</option>
+            <option value="keto">Кето</option>
+            <option value="low_fat">Низький жир</option>
+          </select>
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-baseline justify-between">
+            <Label>Білок г/кг</Label>
+            <span className="font-semibold">
+              {proteinPerKg ? `${proteinPerKg}` : "пресет"}
+            </span>
+          </div>
+          <Input
+            type="range"
+            min={0}
+            max={3}
+            step={0.1}
+            value={proteinPerKg ?? 0}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              setProteinPerKg(v === 0 ? null : v);
+            }}
+          />
         </div>
 
         <div className="rounded-xl bg-accent/50 p-3 text-sm">
@@ -172,6 +311,12 @@ function ProfilePage() {
               <div className="text-lg font-bold">{t.carbs_g}</div>
               <div className="text-[10px]">В, г</div>
             </div>
+          </div>
+          <div className="mt-2 border-t border-border/50 pt-2 text-[11px] text-muted-foreground">
+            BMR {t.bmr} + актив. {t.activity_kcal}
+            {t.workout_kcal > 0 && ` + трен. ${t.workout_kcal}`} = {t.tdee}{" "}
+            {t.delta !== 0 && (t.delta > 0 ? `+${t.delta}` : `${t.delta}`)} ={" "}
+            <b className="text-primary">{t.calories}</b>
           </div>
         </div>
 
