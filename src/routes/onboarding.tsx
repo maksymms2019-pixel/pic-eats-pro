@@ -5,7 +5,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { computeTargets, type Activity, type Goal, type Sex } from "@/lib/nutrition";
+import {
+  computeBreakdown,
+  type Activity,
+  type Goal,
+  type Sex,
+  type BmrMethod,
+  type WorkoutType,
+  type MacroPreset,
+} from "@/lib/nutrition";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/onboarding")({
@@ -23,6 +31,14 @@ function Onboarding() {
   const [weight, setWeight] = useState(70);
   const [activity, setActivity] = useState<Activity>("moderate");
   const [goal, setGoal] = useState<Goal>("maintain");
+  const [bodyFat, setBodyFat] = useState<number | null>(null);
+  const [workoutType, setWorkoutType] = useState<WorkoutType>("none");
+  const [workoutFreq, setWorkoutFreq] = useState(0);
+  const [workoutDur, setWorkoutDur] = useState(45);
+  const [macroPreset, setMacroPreset] = useState<MacroPreset>("balanced");
+  const [proteinPerKg, setProteinPerKg] = useState<number | null>(null);
+  const [calorieDelta, setCalorieDelta] = useState<number | null>(null);
+  const [targetWeight, setTargetWeight] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -32,7 +48,22 @@ function Onboarding() {
   const finish = async () => {
     if (!session) return;
     setSaving(true);
-    const t = computeTargets({ sex, age, height_cm: height, weight_kg: weight, activity, goal });
+    const t = computeBreakdown({
+      sex,
+      age,
+      height_cm: height,
+      weight_kg: weight,
+      activity,
+      goal,
+      bmr_method: (bodyFat ? "katch" : "mifflin") as BmrMethod,
+      body_fat_pct: bodyFat,
+      workout_type: workoutType,
+      workout_frequency: workoutFreq,
+      workout_duration_min: workoutDur,
+      macro_preset: macroPreset,
+      protein_per_kg: proteinPerKg,
+      calorie_delta: calorieDelta,
+    });
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -42,6 +73,15 @@ function Onboarding() {
         weight_kg: weight,
         activity,
         goal,
+        body_fat_pct: bodyFat,
+        bmr_method: bodyFat ? "katch" : "mifflin",
+        workout_type: workoutType,
+        workout_frequency: workoutFreq,
+        workout_duration_min: workoutDur,
+        macro_preset: macroPreset,
+        protein_per_kg: proteinPerKg,
+        calorie_delta: calorieDelta,
+        target_weight_kg: targetWeight,
         target_calories: t.calories,
         target_protein_g: t.protein_g,
         target_carbs_g: t.carbs_g,
@@ -49,6 +89,12 @@ function Onboarding() {
         onboarded: true,
       })
       .eq("id", session.user.id);
+    if (!error && targetWeight) {
+      await supabase.from("weight_logs").insert({
+        user_id: session.user.id,
+        weight_kg: weight,
+      });
+    }
     setSaving(false);
     if (error) {
       toast.error(error.message);
@@ -92,6 +138,28 @@ function Onboarding() {
             step={0.1}
             suffix="кг"
           />
+          <div>
+            <div className="mb-1 flex items-baseline justify-between">
+              <Label>% жиру в тілі (опц., точніше)</Label>
+              <span className="text-sm font-semibold">
+                {bodyFat ? `${bodyFat}%` : "не знаю"}
+              </span>
+            </div>
+            <Input
+              type="range"
+              min={0}
+              max={50}
+              step={1}
+              value={bodyFat ?? 0}
+              onChange={(e) => {
+                const v = parseInt(e.target.value);
+                setBodyFat(v === 0 ? null : v);
+              }}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Якщо знаєш — увімкнеться точніша формула Katch-McArdle
+            </p>
+          </div>
         </div>
       ),
     },
@@ -102,10 +170,10 @@ function Onboarding() {
           {(
             [
               ["sedentary", "Сидячий спосіб життя"],
-              ["light", "Легка активність 1–3 рази/тижд"],
-              ["moderate", "Помірна 3–5 разів/тижд"],
-              ["active", "Висока 6–7 разів/тижд"],
-              ["very_active", "Дуже висока, спорт двічі/день"],
+              ["light", "Легка (ходьба, легка робота)"],
+              ["moderate", "Помірна (на ногах щодня)"],
+              ["active", "Висока (фізична робота)"],
+              ["very_active", "Дуже висока (важка фіз. праця)"],
             ] as const
           ).map(([k, l]) => (
             <button
@@ -119,13 +187,68 @@ function Onboarding() {
               {l}
             </button>
           ))}
+          <p className="text-[11px] text-muted-foreground">
+            Це повсякденна активність БЕЗ тренувань — їх додамо окремо.
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "Тренування",
+      body: (
+        <div className="space-y-3">
+          <div>
+            <Label>Тип</Label>
+            <div className="mt-1.5 grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["none", "Немає"],
+                  ["strength", "Силові"],
+                  ["cardio", "Кардіо"],
+                  ["mixed", "Змішане"],
+                ] as const
+              ).map(([k, l]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setWorkoutType(k)}
+                  className={`rounded-lg border p-2.5 text-sm font-medium transition ${
+                    workoutType === k ? "border-primary bg-primary/10 text-primary" : "border-border"
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+          {workoutType !== "none" && (
+            <>
+              <Field
+                label="Разів на тиждень"
+                value={workoutFreq}
+                onChange={setWorkoutFreq}
+                min={0}
+                max={14}
+                suffix="раз"
+              />
+              <Field
+                label="Тривалість сесії"
+                value={workoutDur}
+                onChange={setWorkoutDur}
+                min={10}
+                max={180}
+                step={5}
+                suffix="хв"
+              />
+            </>
+          )}
         </div>
       ),
     },
     {
       title: "Ціль",
       body: (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {(
             [
               ["lose", "Схуднути", "−500 ккал/день"],
@@ -136,7 +259,10 @@ function Onboarding() {
             <button
               key={k}
               type="button"
-              onClick={() => setGoal(k)}
+              onClick={() => {
+                setGoal(k);
+                setCalorieDelta(null);
+              }}
               className={`flex w-full items-center justify-between rounded-xl border p-4 text-left transition ${
                 goal === k ? "border-primary bg-primary/10" : "border-border bg-card"
               }`}
@@ -145,12 +271,118 @@ function Onboarding() {
               <span className="text-xs text-muted-foreground">{h}</span>
             </button>
           ))}
+
+          <div className="rounded-xl border border-border bg-card p-3">
+            <div className="mb-1 flex items-baseline justify-between">
+              <Label className="text-xs">Кастомний дефіцит/профіцит</Label>
+              <span className="text-sm font-semibold">
+                {calorieDelta !== null ? `${calorieDelta > 0 ? "+" : ""}${calorieDelta} ккал` : "за замовч."}
+              </span>
+            </div>
+            <Input
+              type="range"
+              min={-1000}
+              max={500}
+              step={50}
+              value={calorieDelta ?? 0}
+              onChange={(e) => setCalorieDelta(parseInt(e.target.value))}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              −500 ≈ −0.5 кг/тиждень. Менше за 1500 ккал — небезпечно.
+            </p>
+          </div>
+
+          {goal !== "maintain" && (
+            <div>
+              <div className="mb-1 flex items-baseline justify-between">
+                <Label>Цільова вага (опц.)</Label>
+                <span className="text-sm font-semibold">
+                  {targetWeight ? `${targetWeight} кг` : "—"}
+                </span>
+              </div>
+              <Input
+                type="range"
+                min={0}
+                max={150}
+                step={0.5}
+                value={targetWeight ?? 0}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setTargetWeight(v === 0 ? null : v);
+                }}
+              />
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      title: "Макроси",
+      body: (
+        <div className="space-y-2">
+          {(
+            [
+              ["balanced", "Збалансовано", "30Б/30Ж/40В"],
+              ["high_protein", "Високий білок", "40Б/25Ж/35В"],
+              ["keto", "Кето", "25Б/70Ж/5В"],
+              ["low_fat", "Низький жир", "30Б/20Ж/50В"],
+            ] as const
+          ).map(([k, l, h]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setMacroPreset(k)}
+              className={`flex w-full items-center justify-between rounded-xl border p-3 text-left transition ${
+                macroPreset === k ? "border-primary bg-primary/10" : "border-border bg-card"
+              }`}
+            >
+              <span className="font-medium text-sm">{l}</span>
+              <span className="text-xs text-muted-foreground">{h}</span>
+            </button>
+          ))}
+          <div className="rounded-xl border border-border bg-card p-3">
+            <div className="mb-1 flex items-baseline justify-between">
+              <Label className="text-xs">Білок за вагою (точніше)</Label>
+              <span className="text-sm font-semibold">
+                {proteinPerKg ? `${proteinPerKg} г/кг` : "за пресетом"}
+              </span>
+            </div>
+            <Input
+              type="range"
+              min={0}
+              max={3}
+              step={0.1}
+              value={proteinPerKg ?? 0}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                setProteinPerKg(v === 0 ? null : v);
+              }}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              1.6–2.2 г/кг для дефіциту або набору м'язів
+            </p>
+          </div>
         </div>
       ),
     },
   ];
 
-  const t = computeTargets({ sex, age, height_cm: height, weight_kg: weight, activity, goal });
+  const t = computeBreakdown({
+    sex,
+    age,
+    height_cm: height,
+    weight_kg: weight,
+    activity,
+    goal,
+    bmr_method: (bodyFat ? "katch" : "mifflin") as BmrMethod,
+    body_fat_pct: bodyFat,
+    workout_type: workoutType,
+    workout_frequency: workoutFreq,
+    workout_duration_min: workoutDur,
+    macro_preset: macroPreset,
+    protein_per_kg: proteinPerKg,
+    calorie_delta: calorieDelta,
+  });
 
   return (
     <div className="min-h-screen bg-background px-6 py-10">
@@ -167,14 +399,40 @@ function Onboarding() {
         <p className="mb-6 text-sm text-muted-foreground">Крок {step + 1} з {steps.length}</p>
         {steps[step].body}
         {step === steps.length - 1 && (
-          <div className="mt-6 rounded-xl bg-accent/50 p-4 text-sm">
-            <div className="font-medium">Твоя денна ціль:</div>
-            <div className="mt-2 grid grid-cols-4 gap-2 text-center">
-              <Stat label="Ккал" value={t.calories} />
-              <Stat label="Б" value={`${t.protein_g}г`} />
-              <Stat label="Ж" value={`${t.fat_g}г`} />
-              <Stat label="В" value={`${t.carbs_g}г`} />
+          <div className="mt-6 space-y-3 rounded-xl bg-accent/50 p-4 text-sm">
+            <div>
+              <div className="font-medium">Твоя денна ціль:</div>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-center">
+                <Stat label="Ккал" value={t.calories} />
+                <Stat label="Б" value={`${t.protein_g}г`} />
+                <Stat label="Ж" value={`${t.fat_g}г`} />
+                <Stat label="В" value={`${t.carbs_g}г`} />
+              </div>
             </div>
+            <div className="border-t border-border pt-2 text-[11px] text-muted-foreground">
+              BMR <b className="text-foreground">{t.bmr}</b> + активність{" "}
+              <b className="text-foreground">{t.activity_kcal}</b>
+              {t.workout_kcal > 0 && (
+                <> + тренування <b className="text-foreground">{t.workout_kcal}</b></>
+              )}{" "}
+              ={" "}
+              <b className="text-foreground">{t.tdee}</b>{" "}
+              {t.delta !== 0 && (
+                <>
+                  {t.delta > 0 ? "+" : "−"}
+                  <b className="text-foreground">{Math.abs(t.delta)}</b>
+                </>
+              )}{" "}
+              = <b className="text-primary">{t.calories} ккал</b>
+              {t.age_adjustment > 0 && (
+                <div className="mt-0.5">Корекція за вік: −{t.age_adjustment}%</div>
+              )}
+            </div>
+            {t.calories < 1500 && (
+              <div className="rounded-lg bg-destructive/10 p-2 text-[11px] text-destructive">
+                Норма нижче 1500 ккал — це небезпечно. Зменш дефіцит.
+              </div>
+            )}
           </div>
         )}
         <div className="mt-8 flex gap-3">
