@@ -8,7 +8,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 import { Camera, Barcode, Image as ImageIcon, Loader2 } from "lucide-react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
 import { macrosForGrams } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/scan")({
@@ -339,22 +338,30 @@ function BarcodeScan() {
 
   useEffect(() => {
     if (!scanning || !videoRef.current) return;
-    const reader = new BrowserMultiFormatReader();
     let stop = () => {};
-    reader
-      .decodeFromVideoDevice(undefined, videoRef.current, (result, _err, controls) => {
-        stop = () => controls.stop();
-        if (result) {
-          controls.stop();
+    let cancelled = false;
+    (async () => {
+      const { BrowserMultiFormatReader } = await import("@zxing/browser");
+      if (cancelled || !videoRef.current) return;
+      const reader = new BrowserMultiFormatReader();
+      reader
+        .decodeFromVideoDevice(undefined, videoRef.current, (result, _err, controls) => {
+          stop = () => controls.stop();
+          if (result) {
+            controls.stop();
+            setScanning(false);
+            lookup(result.getText());
+          }
+        })
+        .catch((e) => {
+          toast.error("Не вдалося відкрити камеру: " + (e instanceof Error ? e.message : ""));
           setScanning(false);
-          lookup(result.getText());
-        }
-      })
-      .catch((e) => {
-        toast.error("Не вдалося відкрити камеру: " + (e instanceof Error ? e.message : ""));
-        setScanning(false);
-      });
-    return () => stop();
+        });
+    })();
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, [scanning]);
 
   const lookup = async (code: string) => {
