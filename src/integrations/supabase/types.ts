@@ -153,53 +153,110 @@ export type Database = {
         Row: {
           activity: Database["public"]["Enums"]["activity_enum"] | null
           age: number | null
+          bmr_method: string
+          body_fat_pct: number | null
+          calorie_delta: number | null
           created_at: string
           display_name: string | null
           goal: Database["public"]["Enums"]["goal_enum"] | null
           height_cm: number | null
           id: string
+          macro_preset: string
           onboarded: boolean
+          protein_per_kg: number | null
           sex: Database["public"]["Enums"]["sex_enum"] | null
           target_calories: number | null
           target_carbs_g: number | null
+          target_date: string | null
           target_fat_g: number | null
           target_protein_g: number | null
+          target_weight_kg: number | null
           updated_at: string
           weight_kg: number | null
+          workout_duration_min: number
+          workout_frequency: number
+          workout_type: string
         }
         Insert: {
           activity?: Database["public"]["Enums"]["activity_enum"] | null
           age?: number | null
+          bmr_method?: string
+          body_fat_pct?: number | null
+          calorie_delta?: number | null
           created_at?: string
           display_name?: string | null
           goal?: Database["public"]["Enums"]["goal_enum"] | null
           height_cm?: number | null
           id: string
+          macro_preset?: string
           onboarded?: boolean
+          protein_per_kg?: number | null
           sex?: Database["public"]["Enums"]["sex_enum"] | null
           target_calories?: number | null
           target_carbs_g?: number | null
+          target_date?: string | null
           target_fat_g?: number | null
           target_protein_g?: number | null
+          target_weight_kg?: number | null
           updated_at?: string
           weight_kg?: number | null
+          workout_duration_min?: number
+          workout_frequency?: number
+          workout_type?: string
         }
         Update: {
           activity?: Database["public"]["Enums"]["activity_enum"] | null
           age?: number | null
+          bmr_method?: string
+          body_fat_pct?: number | null
+          calorie_delta?: number | null
           created_at?: string
           display_name?: string | null
           goal?: Database["public"]["Enums"]["goal_enum"] | null
           height_cm?: number | null
           id?: string
+          macro_preset?: string
           onboarded?: boolean
+          protein_per_kg?: number | null
           sex?: Database["public"]["Enums"]["sex_enum"] | null
           target_calories?: number | null
           target_carbs_g?: number | null
+          target_date?: string | null
           target_fat_g?: number | null
           target_protein_g?: number | null
+          target_weight_kg?: number | null
           updated_at?: string
           weight_kg?: number | null
+          workout_duration_min?: number
+          workout_frequency?: number
+          workout_type?: string
+        }
+        Relationships: []
+      }
+      weight_logs: {
+        Row: {
+          created_at: string
+          id: string
+          logged_at: string
+          notes: string | null
+          user_id: string
+          weight_kg: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          logged_at?: string
+          notes?: string | null
+          user_id: string
+          weight_kg: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          logged_at?: string
+          notes?: string | null
+          user_id?: string
+          weight_kg?: number
         }
         Relationships: []
       }

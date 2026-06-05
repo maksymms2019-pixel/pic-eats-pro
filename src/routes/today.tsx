@@ -5,8 +5,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/AppLayout";
 import { MacroRings } from "@/components/MacroRings";
 import { todayISO } from "@/lib/nutrition";
-import { Trash2, Camera } from "lucide-react";
+import { Trash2, Camera, Scale } from "lucide-react";
 import { toast } from "sonner";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/today")({
   head: () => ({ meta: [{ title: "Сьогодні — CalorAI" }] }),
@@ -86,6 +89,45 @@ function TodayPage() {
     return acc;
   }, {});
 
+  const { data: lastWeight } = useQuery({
+    queryKey: ["last_weight", session?.user.id],
+    enabled: !!session,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("weight_logs")
+        .select("weight_kg, logged_at")
+        .order("logged_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+  });
+
+  const [weightOpen, setWeightOpen] = useState(false);
+  const [weightVal, setWeightVal] = useState<string>("");
+
+  const logWeight = async () => {
+    const w = parseFloat(weightVal);
+    if (!session || !w || w < 30 || w > 300) {
+      toast.error("Введи коректну вагу");
+      return;
+    }
+    const { error } = await supabase.from("weight_logs").insert({
+      user_id: session.user.id,
+      weight_kg: w,
+    });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    await supabase.from("profiles").update({ weight_kg: w }).eq("id", session.user.id);
+    toast.success("Вага записана");
+    setWeightOpen(false);
+    setWeightVal("");
+    qc.invalidateQueries({ queryKey: ["last_weight"] });
+    qc.invalidateQueries({ queryKey: ["profile"] });
+  };
+
   return (
     <div className="space-y-6">
       <header>
@@ -105,6 +147,39 @@ function TodayPage() {
         fat={totals.fat}
         fatTarget={tf}
       />
+
+      <div className="rounded-2xl border border-border bg-card p-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent">
+            <Scale className="h-4 w-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-muted-foreground">Вага</div>
+            <div className="text-sm font-semibold">
+              {lastWeight
+                ? `${Number(lastWeight.weight_kg).toFixed(1)} кг · ${new Date(lastWeight.logged_at).toLocaleDateString("uk-UA")}`
+                : "Ще не записано"}
+            </div>
+          </div>
+          {!weightOpen ? (
+            <Button size="sm" variant="outline" onClick={() => setWeightOpen(true)}>
+              Записати
+            </Button>
+          ) : (
+            <div className="flex gap-1">
+              <Input
+                type="number"
+                step="0.1"
+                placeholder="кг"
+                value={weightVal}
+                onChange={(e) => setWeightVal(e.target.value)}
+                className="h-9 w-20"
+              />
+              <Button size="sm" onClick={logWeight}>OK</Button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {(["breakfast", "lunch", "dinner", "snack"] as const).map((meal) => (
         <section key={meal}>

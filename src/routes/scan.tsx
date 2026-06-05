@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
-import { Camera, Barcode, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles } from "lucide-react";
 import { macrosForGrams } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/scan")({
@@ -28,6 +28,17 @@ type AnalyzeResult = {
   fat_g: number;
   confidence?: string;
   notes?: string;
+  assumptions?: string;
+  needs_clarification?: boolean;
+  clarification_question?: string;
+  items?: Array<{
+    name: string;
+    grams: number;
+    calories: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+  }>;
 };
 
 function ScanPage() {
@@ -73,6 +84,10 @@ function PhotoScan() {
   const [grams, setGrams] = useState(100);
   const [meal, setMeal] = useState<"breakfast" | "lunch" | "dinner" | "snack">("snack");
   const [saving, setSaving] = useState(false);
+  const [hint, setHint] = useState("");
+  const [manualName, setManualName] = useState("");
+  const [manualGrams, setManualGrams] = useState(150);
+  const [showManual, setShowManual] = useState(false);
 
   const onPick = (f: File | null) => {
     if (!f) return;
@@ -83,8 +98,9 @@ function PhotoScan() {
     reader.readAsDataURL(f);
   };
 
-  const analyze = async (hint?: string) => {
-    if (!preview || !session) return;
+  const analyze = async (opts?: { hint?: string; previous?: AnalyzeResult; nameOnly?: string; nameOnlyGrams?: number }) => {
+    if (!session) return;
+    if (!preview && !opts?.nameOnly) return;
     setAnalyzing(true);
     try {
       const resp = await fetch("/api/analyze-food", {
@@ -93,7 +109,13 @@ function PhotoScan() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ imageBase64: preview, hint }),
+        body: JSON.stringify({
+          imageBase64: preview ?? undefined,
+          hint: opts?.hint,
+          previous: opts?.previous,
+          name_only: opts?.nameOnly,
+          name_only_grams: opts?.nameOnlyGrams,
+        }),
       });
       if (!resp.ok) {
         const t = await resp.text();
@@ -105,9 +127,36 @@ function PhotoScan() {
       const j = (await resp.json()) as AnalyzeResult;
       setResult(j);
       setGrams(Math.round(j.grams) || 100);
+      setHint("");
+      setShowManual(false);
     } finally {
       setAnalyzing(false);
     }
+  };
+
+  const removeItem = (idx: number) => {
+    if (!result?.items) return;
+    const items = result.items.filter((_, i) => i !== idx);
+    const totals = items.reduce(
+      (a, it) => ({
+        grams: a.grams + Number(it.grams),
+        calories: a.calories + Number(it.calories),
+        protein_g: a.protein_g + Number(it.protein_g),
+        carbs_g: a.carbs_g + Number(it.carbs_g),
+        fat_g: a.fat_g + Number(it.fat_g),
+      }),
+      { grams: 0, calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
+    );
+    setResult({
+      ...result,
+      items,
+      grams: totals.grams || result.grams,
+      calories: totals.calories,
+      protein_g: totals.protein_g,
+      carbs_g: totals.carbs_g,
+      fat_g: totals.fat_g,
+    });
+    setGrams(Math.round(totals.grams) || grams);
   };
 
   const save = async () => {
@@ -186,6 +235,37 @@ function PhotoScan() {
           >
             <ImageIcon className="h-4 w-4" /> Вибрати з галереї
           </button>
+          <div className="rounded-xl border border-dashed border-border bg-card p-4">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">Або без фото — за назвою:</div>
+            <div className="space-y-2">
+              <Input
+                placeholder="напр. куряче філе з рисом"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+              />
+              <div className="flex items-baseline justify-between text-xs">
+                <Label>Порція</Label>
+                <span className="font-semibold">{manualGrams} г</span>
+              </div>
+              <Input
+                type="range"
+                min={20}
+                max={800}
+                step={10}
+                value={manualGrams}
+                onChange={(e) => setManualGrams(parseInt(e.target.value))}
+              />
+              <Button
+                className="w-full"
+                disabled={!manualName.trim() || analyzing}
+                onClick={() =>
+                  analyze({ nameOnly: manualName.trim(), nameOnlyGrams: manualGrams })
+                }
+              >
+                {analyzing ? "Рахую…" : "Розрахувати"}
+              </Button>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -232,6 +312,48 @@ function PhotoScan() {
                 )}
               </div>
 
+              {result.items && result.items.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Компоненти страви</Label>
+                  <div className="space-y-1">
+                    {result.items.map((it, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 rounded-lg bg-accent/40 px-2.5 py-1.5 text-xs"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate font-medium">{it.name}</div>
+                          <div className="text-muted-foreground">
+                            {Math.round(it.grams)}г · {Math.round(it.calories)} ккал
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => removeItem(idx)}
+                          className="text-muted-foreground hover:text-destructive"
+                          aria-label="Прибрати"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.assumptions && (
+                <div className="rounded-lg border border-dashed border-border p-2.5 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">AI припустив: </span>
+                  {result.assumptions}
+                </div>
+              )}
+
+              {result.needs_clarification && result.clarification_question && (
+                <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-600" />
+                  <span>{result.clarification_question}</span>
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <div className="flex items-baseline justify-between">
                   <Label>Порція</Label>
@@ -252,6 +374,67 @@ function PhotoScan() {
                 <Stat v={(result.protein_g * k).toFixed(1)} l="Б" />
                 <Stat v={(result.fat_g * k).toFixed(1)} l="Ж" />
                 <Stat v={(result.carbs_g * k).toFixed(1)} l="В" />
+              </div>
+
+              <div className="space-y-1.5 rounded-lg bg-primary/5 p-2.5">
+                <Label className="text-xs">
+                  <Sparkles className="mr-1 inline h-3 w-3 text-primary" />
+                  Уточнити для AI (підвищить точність)
+                </Label>
+                <Input
+                  placeholder="напр. це індичка ~150г, гречка ~120г, без олії"
+                  value={hint}
+                  onChange={(e) => setHint(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="flex-1"
+                    disabled={!hint.trim() || analyzing}
+                    onClick={() => analyze({ hint, previous: result })}
+                  >
+                    Перерахувати з підказкою
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowManual((s) => !s)}
+                  className="text-xs text-muted-foreground underline"
+                >
+                  {showManual ? "Сховати" : "Це зовсім інша страва →"}
+                </button>
+                {showManual && (
+                  <div className="space-y-2 pt-1">
+                    <Input
+                      placeholder="Точна назва страви"
+                      value={manualName}
+                      onChange={(e) => setManualName(e.target.value)}
+                    />
+                    <div className="flex items-baseline justify-between text-xs">
+                      <Label>Порція</Label>
+                      <span className="font-semibold">{manualGrams} г</span>
+                    </div>
+                    <Input
+                      type="range"
+                      min={20}
+                      max={800}
+                      step={10}
+                      value={manualGrams}
+                      onChange={(e) => setManualGrams(parseInt(e.target.value))}
+                    />
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!manualName.trim() || analyzing}
+                      onClick={() =>
+                        analyze({ nameOnly: manualName.trim(), nameOnlyGrams: manualGrams })
+                      }
+                    >
+                      Розрахувати за назвою
+                    </Button>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5">
