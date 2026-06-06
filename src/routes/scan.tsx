@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
-import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles } from "lucide-react";
+import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles, Heart, Check } from "lucide-react";
 import { macrosForGrams } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/scan")({
@@ -88,11 +88,14 @@ function PhotoScan() {
   const [manualName, setManualName] = useState("");
   const [manualGrams, setManualGrams] = useState(150);
   const [showManual, setShowManual] = useState(false);
+  const [savingFav, setSavingFav] = useState(false);
+  const [favSaved, setFavSaved] = useState(false);
 
   const onPick = (f: File | null) => {
     if (!f) return;
     setFile(f);
     setResult(null);
+    setFavSaved(false);
     const reader = new FileReader();
     reader.onload = () => setPreview(reader.result as string);
     reader.readAsDataURL(f);
@@ -129,6 +132,7 @@ function PhotoScan() {
       setGrams(Math.round(j.grams) || 100);
       setHint("");
       setShowManual(false);
+      setFavSaved(false);
     } finally {
       setAnalyzing(false);
     }
