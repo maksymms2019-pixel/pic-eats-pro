@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
-import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles } from "lucide-react";
+import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles, Heart, Check } from "lucide-react";
 import { macrosForGrams } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/scan")({
@@ -88,11 +88,14 @@ function PhotoScan() {
   const [manualName, setManualName] = useState("");
   const [manualGrams, setManualGrams] = useState(150);
   const [showManual, setShowManual] = useState(false);
+  const [savingFav, setSavingFav] = useState(false);
+  const [favSaved, setFavSaved] = useState(false);
 
   const onPick = (f: File | null) => {
     if (!f) return;
     setFile(f);
     setResult(null);
+    setFavSaved(false);
     const reader = new FileReader();
     reader.onload = () => setPreview(reader.result as string);
     reader.readAsDataURL(f);
@@ -129,6 +132,7 @@ function PhotoScan() {
       setGrams(Math.round(j.grams) || 100);
       setHint("");
       setShowManual(false);
+      setFavSaved(false);
     } finally {
       setAnalyzing(false);
     }
@@ -163,19 +167,7 @@ function PhotoScan() {
     if (!result || !session) return;
     setSaving(true);
     try {
-      let photoUrl: string | null = null;
-      if (file) {
-        const path = `${session.user.id}/${Date.now()}-${file.name}`;
-        const { error: upErr } = await supabase.storage.from("food-photos").upload(path, file, {
-          contentType: file.type,
-        });
-        if (!upErr) {
-          const { data: signed } = await supabase.storage
-            .from("food-photos")
-            .createSignedUrl(path, 60 * 60 * 24 * 365);
-          photoUrl = signed?.signedUrl ?? null;
-        }
-      }
+      const photoUrl = await uploadPhoto();
       const k = grams / (result.grams || 100);
       const { error } = await supabase.from("food_entries").insert({
         user_id: session.user.id,
@@ -200,6 +192,44 @@ function PhotoScan() {
   };
 
   const k = result ? grams / (result.grams || 100) : 1;
+
+  const uploadPhoto = async (): Promise<string | null> => {
+    if (!file || !session) return null;
+    const path = `${session.user.id}/${Date.now()}-${file.name}`;
+    const { error: upErr } = await supabase.storage.from("food-photos").upload(path, file, {
+      contentType: file.type,
+    });
+    if (upErr) return null;
+    const { data: signed } = await supabase.storage
+      .from("food-photos")
+      .createSignedUrl(path, 60 * 60 * 24 * 365);
+    return signed?.signedUrl ?? null;
+  };
+
+  const saveAsFavorite = async () => {
+    if (!result || !session) return;
+    setSavingFav(true);
+    try {
+      const photoUrl = await uploadPhoto();
+      const { error } = await supabase.from("favorites").insert({
+        user_id: session.user.id,
+        name: result.name,
+        grams: Math.round(result.grams) || 100,
+        calories: Math.round(result.calories),
+        protein_g: +result.protein_g.toFixed(1),
+        carbs_g: +result.carbs_g.toFixed(1),
+        fat_g: +result.fat_g.toFixed(1),
+        photo_url: photoUrl,
+      });
+      if (error) throw error;
+      setFavSaved(true);
+      toast.success("Збережено в Мої страви");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не вдалося зберегти");
+    } finally {
+      setSavingFav(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -375,6 +405,29 @@ function PhotoScan() {
                 <Stat v={(result.fat_g * k).toFixed(1)} l="Ж" />
                 <Stat v={(result.carbs_g * k).toFixed(1)} l="В" />
               </div>
+
+              {(() => {
+                const fromMacros =
+                  result.protein_g * 4 + result.carbs_g * 4 + result.fat_g * 9;
+                const ok = fromMacros > 0 && Math.abs(result.calories - fromMacros) / fromMacros <= 0.1;
+                return (
+                  <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Check className={`h-3 w-3 ${ok ? "text-primary" : "text-muted-foreground"}`} />
+                    Б·4+В·4+Ж·9 = {Math.round(fromMacros)} ккал {ok ? "✓" : "≈"}
+                  </div>
+                );
+              })()}
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={savingFav || favSaved}
+                onClick={saveAsFavorite}
+              >
+                <Heart className={`mr-1.5 h-4 w-4 ${favSaved ? "fill-primary text-primary" : ""}`} />
+                {favSaved ? "У моїх стравах" : savingFav ? "Зберігаю…" : "Зберегти як мою страву"}
+              </Button>
 
               <div className="space-y-1.5 rounded-lg bg-primary/5 p-2.5">
                 <Label className="text-xs">

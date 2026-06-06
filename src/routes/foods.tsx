@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Utensils } from "lucide-react";
 import { macrosForGrams, todayISO } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/foods")({
@@ -149,6 +149,7 @@ function MyFoods() {
 
 function Favs() {
   const { session } = useAuth();
+  const qc = useQueryClient();
   const { data } = useQuery({
     queryKey: ["favorites"],
     enabled: !!session,
@@ -156,6 +157,7 @@ function Favs() {
       const { data } = await supabase
         .from("favorites")
         .select("*")
+        .order("use_count", { ascending: false })
         .order("created_at", { ascending: false });
       return data ?? [];
     },
@@ -174,29 +176,65 @@ function Favs() {
       source: "favorite",
     });
     if (error) toast.error(error.message);
-    else toast.success(`+ ${f.name}`);
+    else {
+      await supabase
+        .from("favorites")
+        .update({ use_count: (f.use_count ?? 0) + 1, last_used_at: new Date().toISOString() })
+        .eq("id", f.id);
+      qc.invalidateQueries({ queryKey: ["favorites"] });
+      toast.success(`+ ${f.name}`);
+    }
+  };
+  const del = async (id: string) => {
+    const { error } = await supabase.from("favorites").delete().eq("id", id);
+    if (error) toast.error(error.message);
+    else qc.invalidateQueries({ queryKey: ["favorites"] });
   };
   return (
     <div className="space-y-2">
       {(data ?? []).length === 0 && (
         <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-          Додавай страви в улюблені, щоб швидко логувати їх знову.
+          Сфотографуй страву → «Зберегти як мою страву», і вона з'явиться тут для миттєвого повторного додавання.
         </p>
       )}
       {(data ?? []).map((f) => (
-        <button
+        <div
           key={f.id}
-          onClick={() => log(f)}
-          className="flex w-full items-center justify-between rounded-xl border border-border bg-card p-3 text-left active:scale-[0.99]"
+          className="flex items-center gap-3 rounded-xl border border-border bg-card p-2.5"
         >
-          <div>
-            <div className="font-medium">{f.name}</div>
-            <div className="text-xs text-muted-foreground">
-              {Math.round(Number(f.grams))} г · {Math.round(Number(f.calories))} ккал
-            </div>
+          <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
+            {f.photo_url ? (
+              <img src={f.photo_url} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                <Utensils className="h-5 w-5" />
+              </div>
+            )}
           </div>
-          <Plus className="h-5 w-5 text-primary" />
-        </button>
+          <button
+            onClick={() => log(f)}
+            className="flex-1 min-w-0 text-left active:opacity-70"
+          >
+            <div className="truncate font-medium">{f.name}</div>
+            <div className="text-xs text-muted-foreground">
+              {Math.round(Number(f.grams))} г · {Math.round(Number(f.calories))} ккал · Б{Number(f.protein_g).toFixed(0)} Ж{Number(f.fat_g).toFixed(0)} В{Number(f.carbs_g).toFixed(0)}
+            </div>
+          </button>
+          <button
+            onClick={() => log(f)}
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+            aria-label="Додати"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => del(f.id)}
+            className="p-1 text-muted-foreground hover:text-destructive"
+            aria-label="Видалити"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       ))}
     </div>
   );

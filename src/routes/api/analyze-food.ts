@@ -66,29 +66,65 @@ export const Route = createFileRoute("/api/analyze-food")({
           });
         }
 
-        // Pull user weight/sex for portion scale reference
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("sex,weight_kg,height_cm")
-          .eq("id", u.user.id)
-          .maybeSingle();
+        // Pull user context + favorites for stability
+        const [{ data: prof }, { data: favs }] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("sex,weight_kg,height_cm")
+            .eq("id", u.user.id)
+            .maybeSingle(),
+          supabase
+            .from("favorites")
+            .select("name,grams,calories,protein_g,carbs_g,fat_g")
+            .order("use_count", { ascending: false })
+            .limit(20),
+        ]);
 
-        const sys = `Ти професійний дієтолог-аналітик з 15-річним досвідом оцінки калорійності страв за фотографією. Твоя ціль — МАКСИМАЛЬНА ТОЧНІСТЬ.
+        const favoritesBlock = favs && favs.length
+          ? `\n\nВЛАСНА БАЗА КОРИСТУВАЧА (вже перевірені цим користувачем страви — якщо нова страва дуже схожа на одну з них, використовуй ТІ Ж значення на 100г для консистентності):\n${favs
+              .map((f) => {
+                const g = Number(f.grams) || 100;
+                const per100 = (v: number) => Math.round((Number(v) / g) * 100 * 10) / 10;
+                return `- "${f.name}" → ${per100(Number(f.calories))} ккал/100г (Б${per100(Number(f.protein_g))} Ж${per100(Number(f.fat_g))} В${per100(Number(f.carbs_g))})`;
+              })
+              .join("\n")}`
+          : "";
 
-АЛГОРИТМ:
-1. Спочатку перерахуй ВСІ видимі компоненти страви окремо (м'ясо, гарнір, овочі, соус, олія, хліб тощо).
-2. Для кожного компонента оціни вагу в грамах. Використовуй референси розміру: стандартна тарілка ~26см, виделка ~20см, чашка ~250мл, ложка ~15г.
-3. Враховуй спосіб приготування (смажене на олії додає +50-100 ккал, відварене — без додатків).
-4. Для кожного компонента порахуй ккал та БЖВ. Сума по компонентах = total.
-5. ВАЖЛИВО: перевір, що калорії узгоджуються з БЖВ за формулою (Б×4 + В×4 + Ж×9 ≈ ккал, допустима похибка ±10%).
-6. Якщо страва неоднозначна (вид м'яса, тип олії, наявність цукру/соусу) — постав needs_clarification=true та сформулюй конкретне коротке питання.
+        const sys = `Ти професійний дієтолог-аналітик з 15-річним досвідом оцінки калорійності страв за фотографією. Твоя ціль — МАКСИМАЛЬНА ТОЧНІСТЬ і ДЕТЕРМІНОВАНІСТЬ (однакове фото = однаковий результат).
 
-Якщо користувач надав уточнення — ДОВІРЯЙ ЙОМУ і використовуй як основу, не оспорюй.
+АЛГОРИТМ (виконуй СУВОРО по кроках):
+1. Перерахуй ВСІ видимі компоненти страви окремо (тісто/хліб, м'ясо, овочі, сир, соус, олія тощо).
+2. Для кожного компонента оціни вагу в грамах. Референси: тарілка ~26см, столова ложка ~15г олії, чашка ~250мл, куряче філе середнє ~150г, яйце ~55г.
+3. Спосіб приготування: смажене на олії додає 5-15г олії (45-135 ккал); запечене без олії — нічого.
+4. Використовуй ЯКОРНІ значення (на 100г, готовий продукт):
+   • Лаваш тонкий: 270 ккал (Б9 Ж1 В55)
+   • Хліб білий: 250 ккал (Б8 Ж3 В49)
+   • Куряче філе варене: 165 ккал (Б31 Ж3.6 В0); смажене: 210 ккал (Б29 Ж9 В0)
+   • Куряче стегно з шкірою смажене: 230 ккал (Б24 Ж14 В0)
+   • Свинина смажена: 290 ккал (Б25 Ж21 В0)
+   • Яловичина варена: 250 ккал (Б26 Ж16 В0)
+   • Риба біла запечена: 130 ккал (Б22 Ж4 В0)
+   • Лосось смажений: 215 ккал (Б22 Ж13 В0)
+   • Яйце варене: 155 ккал (Б13 Ж11 В1); смажене: 200 ккал
+   • Рис варений: 130 ккал (Б2.7 Ж0.3 В28)
+   • Гречка варена: 110 ккал (Б4 Ж1 В20)
+   • Картопля варена: 87 ккал; смажена: 190 ккал
+   • Макарони варені: 130 ккал (Б5 Ж1 В25)
+   • Сир твердий: 350 ккал (Б25 Ж27 В2)
+   • Сир м'який (моцарела/фета): 280 ккал (Б18 Ж22 В3)
+   • Овочі свіжі (огірок/помідор/салат): 15-25 ккал
+   • Олія соняшникова: 900 ккал (Ж100)
+   • Майонез: 680 ккал (Ж75 В2)
+   • Сметана 20%: 200 ккал (Б2.8 Ж20 В3)
+5. ОБОВ'ЯЗКОВО: перевір, що Б×4 + В×4 + Ж×9 ≈ ккал (похибка ≤10%). Якщо не сходиться — перерахуй макроси, бо ВОНИ правдиві.
+6. Якщо страва неоднозначна (вид м'яса, наявність олії/соусу) — needs_clarification=true + конкретне коротке питання.
+
+Якщо користувач надав уточнення — ДОВІРЯЙ йому беззаперечно.
 Якщо на фото немає їжі — name="" і needs_clarification=true.
 
-Контекст про користувача (для оцінки масштабу на фото): ${prof ? `${prof.sex ?? "?"}, ${prof.weight_kg ?? "?"}кг, ${prof.height_cm ?? "?"}см` : "невідомо"}.
+Контекст про користувача: ${prof ? `${prof.sex ?? "?"}, ${prof.weight_kg ?? "?"}кг` : "невідомо"}.${favoritesBlock}
 
-Назви — українською. Відповідай ТІЛЬКИ через виклик інструмента submit_nutrition.`;
+Назви страв — українською. Відповідай ТІЛЬКИ через виклик інструмента submit_nutrition.`;
 
         let userText = "Проаналізуй фото страви.";
         if (body.name_only) {
@@ -119,6 +155,8 @@ export const Route = createFileRoute("/api/analyze-food")({
           },
           body: JSON.stringify({
             model: "google/gemini-2.5-pro",
+            temperature: 0,
+            seed: 42,
             messages: [
               { role: "system", content: sys },
               { role: "user", content: userParts },
@@ -190,7 +228,28 @@ export const Route = createFileRoute("/api/analyze-food")({
           });
         }
         try {
-          const parsed = JSON.parse(args);
+          const parsed = JSON.parse(args) as {
+            name: string;
+            grams: number;
+            calories: number;
+            protein_g: number;
+            carbs_g: number;
+            fat_g: number;
+            [k: string]: unknown;
+          };
+          // Server-side energy balance normalization
+          const fromMacros =
+            Number(parsed.protein_g) * 4 +
+            Number(parsed.carbs_g) * 4 +
+            Number(parsed.fat_g) * 9;
+          if (fromMacros > 0 && Math.abs(parsed.calories - fromMacros) / fromMacros > 0.12) {
+            parsed.calories = Math.round(fromMacros);
+          } else {
+            parsed.calories = Math.round(parsed.calories);
+          }
+          parsed.protein_g = Math.round(parsed.protein_g * 10) / 10;
+          parsed.carbs_g = Math.round(parsed.carbs_g * 10) / 10;
+          parsed.fat_g = Math.round(parsed.fat_g * 10) / 10;
           return new Response(JSON.stringify(parsed), {
             headers: { "Content-Type": "application/json" },
           });
