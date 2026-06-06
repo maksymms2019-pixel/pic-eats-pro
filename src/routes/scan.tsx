@@ -167,19 +167,7 @@ function PhotoScan() {
     if (!result || !session) return;
     setSaving(true);
     try {
-      let photoUrl: string | null = null;
-      if (file) {
-        const path = `${session.user.id}/${Date.now()}-${file.name}`;
-        const { error: upErr } = await supabase.storage.from("food-photos").upload(path, file, {
-          contentType: file.type,
-        });
-        if (!upErr) {
-          const { data: signed } = await supabase.storage
-            .from("food-photos")
-            .createSignedUrl(path, 60 * 60 * 24 * 365);
-          photoUrl = signed?.signedUrl ?? null;
-        }
-      }
+      const photoUrl = await uploadPhoto();
       const k = grams / (result.grams || 100);
       const { error } = await supabase.from("food_entries").insert({
         user_id: session.user.id,
@@ -204,6 +192,44 @@ function PhotoScan() {
   };
 
   const k = result ? grams / (result.grams || 100) : 1;
+
+  const uploadPhoto = async (): Promise<string | null> => {
+    if (!file || !session) return null;
+    const path = `${session.user.id}/${Date.now()}-${file.name}`;
+    const { error: upErr } = await supabase.storage.from("food-photos").upload(path, file, {
+      contentType: file.type,
+    });
+    if (upErr) return null;
+    const { data: signed } = await supabase.storage
+      .from("food-photos")
+      .createSignedUrl(path, 60 * 60 * 24 * 365);
+    return signed?.signedUrl ?? null;
+  };
+
+  const saveAsFavorite = async () => {
+    if (!result || !session) return;
+    setSavingFav(true);
+    try {
+      const photoUrl = await uploadPhoto();
+      const { error } = await supabase.from("favorites").insert({
+        user_id: session.user.id,
+        name: result.name,
+        grams: Math.round(result.grams) || 100,
+        calories: Math.round(result.calories),
+        protein_g: +result.protein_g.toFixed(1),
+        carbs_g: +result.carbs_g.toFixed(1),
+        fat_g: +result.fat_g.toFixed(1),
+        photo_url: photoUrl,
+      });
+      if (error) throw error;
+      setFavSaved(true);
+      toast.success("Збережено в Мої страви");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не вдалося зберегти");
+    } finally {
+      setSavingFav(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
