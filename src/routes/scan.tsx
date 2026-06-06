@@ -406,6 +406,29 @@ function PhotoScan() {
                 <Stat v={(result.carbs_g * k).toFixed(1)} l="В" />
               </div>
 
+              {(() => {
+                const fromMacros =
+                  result.protein_g * 4 + result.carbs_g * 4 + result.fat_g * 9;
+                const ok = fromMacros > 0 && Math.abs(result.calories - fromMacros) / fromMacros <= 0.1;
+                return (
+                  <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Check className={`h-3 w-3 ${ok ? "text-primary" : "text-muted-foreground"}`} />
+                    Б·4+В·4+Ж·9 = {Math.round(fromMacros)} ккал {ok ? "✓" : "≈"}
+                  </div>
+                );
+              })()}
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={savingFav || favSaved}
+                onClick={saveAsFavorite}
+              >
+                <Heart className={`mr-1.5 h-4 w-4 ${favSaved ? "fill-primary text-primary" : ""}`} />
+                {favSaved ? "У моїх стравах" : savingFav ? "Зберігаю…" : "Зберегти як мою страву"}
+              </Button>
+
               <div className="space-y-1.5 rounded-lg bg-primary/5 p-2.5">
                 <Label className="text-xs">
                   <Sparkles className="mr-1 inline h-3 w-3 text-primary" />
