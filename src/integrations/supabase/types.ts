@@ -64,8 +64,11 @@ export type Database = {
           fat_g: number
           grams: number
           id: string
+          last_used_at: string | null
           name: string
+          photo_url: string | null
           protein_g: number
+          use_count: number
           user_id: string
         }
         Insert: {
@@ -75,8 +78,11 @@ export type Database = {
           fat_g?: number
           grams: number
           id?: string
+          last_used_at?: string | null
           name: string
+          photo_url?: string | null
           protein_g?: number
+          use_count?: number
           user_id: string
         }
         Update: {
@@ -86,8 +92,11 @@ export type Database = {
           fat_g?: number
           grams?: number
           id?: string
+          last_used_at?: string | null
           name?: string
+          photo_url?: string | null
           protein_g?: number
+          use_count?: number
           user_id?: string
         }
         Relationships: []
