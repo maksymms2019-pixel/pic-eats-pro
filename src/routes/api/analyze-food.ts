@@ -46,12 +46,18 @@ export const Route = createFileRoute("/api/analyze-food")({
 
         const body = (await request.json()) as {
           imageBase64?: string;
+          imagesBase64?: string[];
           hint?: string;
           previous?: PrevResult;
           name_only?: string;
           name_only_grams?: number;
         };
-        if (!body.imageBase64 && !body.name_only) {
+        const images: string[] = body.imagesBase64?.length
+          ? body.imagesBase64
+          : body.imageBase64
+            ? [body.imageBase64]
+            : [];
+        if (images.length === 0 && !body.name_only) {
           return new Response(JSON.stringify({ error: "no image" }), {
             status: 400,
             headers: { "Content-Type": "application/json" },
@@ -66,8 +72,8 @@ export const Route = createFileRoute("/api/analyze-food")({
           });
         }
 
-        // Pull user context + favorites for stability
-        const [{ data: prof }, { data: favs }] = await Promise.all([
+        // Pull user context + favorites + recent entries for stability
+        const [{ data: prof }, { data: favs }, { data: recent }] = await Promise.all([
           supabase
             .from("profiles")
             .select("sex,weight_kg,height_cm")
@@ -78,6 +84,11 @@ export const Route = createFileRoute("/api/analyze-food")({
             .select("name,grams,calories,protein_g,carbs_g,fat_g")
             .order("use_count", { ascending: false })
             .limit(20),
+          supabase
+            .from("food_entries")
+            .select("name,grams,calories,protein_g,carbs_g,fat_g")
+            .order("consumed_at", { ascending: false })
+            .limit(8),
         ]);
 
         const favoritesBlock = favs && favs.length
@@ -90,15 +101,29 @@ export const Route = createFileRoute("/api/analyze-food")({
               .join("\n")}`
           : "";
 
+        const recentBlock = recent && recent.length
+          ? `\n\nОСТАННІ СТРАВИ КОРИСТУВАЧА (для контексту смаків і повторюваних страв):\n${recent
+              .map((e) => `- "${e.name}" ${Math.round(Number(e.grams))}г = ${Math.round(Number(e.calories))} ккал`)
+              .join("\n")}`
+          : "";
+
+        const multiPhotoBlock = images.length > 1
+          ? `\n\nУВАГА: користувач надав ${images.length} ФОТО. Перше — головне фото страви. Решта — УТОЧНЮВАЛЬНІ (упаковка, етикетка з харчовою цінністю, склад, інший ракурс, бренд). 
+ПРАВИЛО ЕТИКЕТКИ: якщо на будь-якому фото видно офіційну таблицю харчової цінності (ккал/100г, білки, жири, вуглеводи) — використовуй САМЕ ЦІ значення як істину, оцінюй лише вагу порції. Це найточніше джерело.
+ПРАВИЛО БРЕНДУ: якщо видно бренд+назву продукту — використовуй стандартні харчові дані цього продукту, не вгадуй.`
+          : "";
+
         const sys = `Ти професійний дієтолог-аналітик з 15-річним досвідом оцінки калорійності страв за фотографією. Твоя ціль — МАКСИМАЛЬНА ТОЧНІСТЬ і ДЕТЕРМІНОВАНІСТЬ (однакове фото = однаковий результат).
 
 АЛГОРИТМ (виконуй СУВОРО по кроках):
+0. Якщо є фото з ЕТИКЕТКОЮ — починай з неї: прочитай таблицю харчової цінності та запиши офіційні значення на 100г.
 1. Перерахуй ВСІ видимі компоненти страви окремо (тісто/хліб, м'ясо, овочі, сир, соус, олія тощо).
-2. Для кожного компонента оціни вагу в грамах. Референси: тарілка ~26см, столова ложка ~15г олії, чашка ~250мл, куряче філе середнє ~150г, яйце ~55г.
+2. Для кожного компонента оціни вагу в грамах. Референси: тарілка ~26см, столова ложка ~15г олії, чашка ~250мл, куряче філе середнє ~150г, яйце ~55г, скиба хліба ~25г.
 3. Спосіб приготування: смажене на олії додає 5-15г олії (45-135 ккал); запечене без олії — нічого.
 4. Використовуй ЯКОРНІ значення (на 100г, готовий продукт):
    • Лаваш тонкий: 270 ккал (Б9 Ж1 В55)
    • Хліб білий: 250 ккал (Б8 Ж3 В49)
+   • Хліб житній: 220 ккал (Б6 Ж1 В43)
    • Куряче філе варене: 165 ккал (Б31 Ж3.6 В0); смажене: 210 ккал (Б29 Ж9 В0)
    • Куряче стегно з шкірою смажене: 230 ккал (Б24 Ж14 В0)
    • Свинина смажена: 290 ккал (Б25 Ж21 В0)
@@ -112,21 +137,39 @@ export const Route = createFileRoute("/api/analyze-food")({
    • Макарони варені: 130 ккал (Б5 Ж1 В25)
    • Сир твердий: 350 ккал (Б25 Ж27 В2)
    • Сир м'який (моцарела/фета): 280 ккал (Б18 Ж22 В3)
+   • Сир кисломолочний 5%: 120 ккал (Б17 Ж5 В2)
    • Овочі свіжі (огірок/помідор/салат): 15-25 ккал
    • Олія соняшникова: 900 ккал (Ж100)
    • Майонез: 680 ккал (Ж75 В2)
    • Сметана 20%: 200 ккал (Б2.8 Ж20 В3)
+   • Йогурт натуральний: 60 ккал (Б4 Ж3 В5); грецький: 100 ккал (Б10 Ж5 В4)
+   • Гранола: 470 ккал (Б10 Ж18 В65)
+   • Вівсянка варена на воді: 70 ккал (Б2.5 Ж1.5 В12)
+   • Борщ: 50 ккал (Б2 Ж2 В5)
+   • Вареники з картоплею: 180 ккал (Б5 Ж5 В30); з сиром: 200 ккал
+   • Голубці: 110 ккал (Б6 Ж5 В10)
+   • Сирники: 210 ккал (Б14 Ж8 В22)
+   • Шаурма: 220 ккал (Б12 Ж10 В20)
+   • Піца Маргарита: 260 ккал (Б11 Ж10 В30)
+   • Чіпси: 530 ккал (Б6 Ж33 В53)
+   • Шоколад молочний: 545 ккал (Б8 Ж32 В55)
+   • Печиво вівсяне: 440 ккал (Б6 Ж16 В68)
+   • Банан: 90 ккал; яблуко: 50 ккал; авокадо: 160 ккал
 5. ОБОВ'ЯЗКОВО: перевір, що Б×4 + В×4 + Ж×9 ≈ ккал (похибка ≤10%). Якщо не сходиться — перерахуй макроси, бо ВОНИ правдиві.
-6. Якщо страва неоднозначна (вид м'яса, наявність олії/соусу) — needs_clarification=true + конкретне коротке питання.
+6. Sanity-чек: ккал/г має бути в межах 0.2–9.0. Поза межами — перерахуй.
+7. Якщо страва неоднозначна (вид м'яса, наявність олії/соусу) — needs_clarification=true + конкретне коротке питання. Запропонуй користувачу додати уточнювальне фото (упаковка, склад) або написати назву.
 
 Якщо користувач надав уточнення — ДОВІРЯЙ йому беззаперечно.
-Якщо на фото немає їжі — name="" і needs_clarification=true.
+Якщо на фото немає їжі — name="" і needs_clarification=true.${multiPhotoBlock}
 
-Контекст про користувача: ${prof ? `${prof.sex ?? "?"}, ${prof.weight_kg ?? "?"}кг` : "невідомо"}.${favoritesBlock}
+Контекст про користувача: ${prof ? `${prof.sex ?? "?"}, ${prof.weight_kg ?? "?"}кг` : "невідомо"}.${favoritesBlock}${recentBlock}
 
 Назви страв — українською. Відповідай ТІЛЬКИ через виклик інструмента submit_nutrition.`;
 
         let userText = "Проаналізуй фото страви.";
+        if (images.length > 1) {
+          userText = `Проаналізуй ${images.length} фото: 1-ше — головне фото страви, наступні — уточнювальні (упаковка/етикетка/склад/інший ракурс). Якщо бачиш таблицю харчової цінності на етикетці — використай саме її значення.`;
+        }
         if (body.name_only) {
           userText = `Користувач каже, що це: "${body.name_only}". Порція ~${body.name_only_grams ?? 100} г. Розрахуй калорії та БЖВ для цієї страви та порції (фото може бути не репрезентативним або відсутнім).`;
         } else if (body.hint && body.previous) {
@@ -143,8 +186,8 @@ export const Route = createFileRoute("/api/analyze-food")({
         }
 
         const userParts: Array<unknown> = [{ type: "text", text: userText }];
-        if (body.imageBase64) {
-          userParts.push({ type: "image_url", image_url: { url: body.imageBase64 } });
+        for (const img of images) {
+          userParts.push({ type: "image_url", image_url: { url: img } });
         }
 
         const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -246,6 +289,14 @@ export const Route = createFileRoute("/api/analyze-food")({
             parsed.calories = Math.round(fromMacros);
           } else {
             parsed.calories = Math.round(parsed.calories);
+          }
+          // Sanity: kcal/g must be in [0.2, 9.0]
+          const g = Number(parsed.grams) || 0;
+          if (g > 0) {
+            const kcalPerG = parsed.calories / g;
+            if (kcalPerG > 9.0 || kcalPerG < 0.2) {
+              if (fromMacros > 0) parsed.calories = Math.round(fromMacros);
+            }
           }
           parsed.protein_g = Math.round(parsed.protein_g * 10) / 10;
           parsed.carbs_g = Math.round(parsed.carbs_g * 10) / 10;
