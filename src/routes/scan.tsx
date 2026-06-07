@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
-import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles, Heart, Check } from "lucide-react";
+import { Camera, Barcode, Image as ImageIcon, Loader2, X, AlertTriangle, Sparkles, Heart, Check, Plus } from "lucide-react";
 import { macrosForGrams } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/scan")({
@@ -72,13 +72,18 @@ function ScanPage() {
   );
 }
 
+type Photo = { file: File; preview: string };
+
+const MAX_PHOTOS = 4;
+
 function PhotoScan() {
   const { session } = useAuth();
   const navigate = useNavigate();
   const cameraInput = useRef<HTMLInputElement>(null);
   const galleryInput = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const extraCameraInput = useRef<HTMLInputElement>(null);
+  const extraGalleryInput = useRef<HTMLInputElement>(null);
+  const [photos, setPhotos] = useState<Photo[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [grams, setGrams] = useState(100);
@@ -91,19 +96,46 @@ function PhotoScan() {
   const [savingFav, setSavingFav] = useState(false);
   const [favSaved, setFavSaved] = useState(false);
 
-  const onPick = (f: File | null) => {
-    if (!f) return;
-    setFile(f);
+  const readAsDataURL = (f: File) =>
+    new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = () => reject(new Error("read failed"));
+      r.readAsDataURL(f);
+    });
+
+  const addPhotos = async (files: FileList | null) => {
+    if (!files || !files.length) return;
+    const room = MAX_PHOTOS - photos.length;
+    const slice = Array.from(files).slice(0, room);
+    const next: Photo[] = [];
+    for (const f of slice) {
+      try {
+        const preview = await readAsDataURL(f);
+        next.push({ file: f, preview });
+      } catch {}
+    }
+    if (next.length) {
+      setPhotos((p) => [...p, ...next]);
+      setResult(null);
+      setFavSaved(false);
+    }
+  };
+
+  const removePhoto = (idx: number) => {
+    setPhotos((p) => p.filter((_, i) => i !== idx));
     setResult(null);
-    setFavSaved(false);
-    const reader = new FileReader();
-    reader.onload = () => setPreview(reader.result as string);
-    reader.readAsDataURL(f);
+  };
+
+  const resetAll = () => {
+    setPhotos([]);
+    setResult(null);
+    setFile(null as never);
   };
 
   const analyze = async (opts?: { hint?: string; previous?: AnalyzeResult; nameOnly?: string; nameOnlyGrams?: number }) => {
     if (!session) return;
-    if (!preview && !opts?.nameOnly) return;
+    if (photos.length === 0 && !opts?.nameOnly) return;
     setAnalyzing(true);
     try {
       const resp = await fetch("/api/analyze-food", {
@@ -113,7 +145,7 @@ function PhotoScan() {
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          imageBase64: preview ?? undefined,
+          imagesBase64: photos.map((p) => p.preview),
           hint: opts?.hint,
           previous: opts?.previous,
           name_only: opts?.nameOnly,
@@ -124,6 +156,7 @@ function PhotoScan() {
         const t = await resp.text();
         if (resp.status === 429) toast.error("Забагато запитів. Спробуй через хвилину.");
         else if (resp.status === 402) toast.error("Закінчились кредити AI. Поповни план Lovable.");
+        else if (!navigator.onLine) toast.error("Немає інтернету — спробуй ще раз.");
         else toast.error(t || "Помилка AI");
         return;
       }
@@ -167,7 +200,7 @@ function PhotoScan() {
     if (!result || !session) return;
     setSaving(true);
     try {
-      const photoUrl = await uploadPhoto();
+      const urls = await uploadPhotos();
       const k = grams / (result.grams || 100);
       const { error } = await supabase.from("food_entries").insert({
         user_id: session.user.id,
@@ -178,7 +211,8 @@ function PhotoScan() {
         protein_g: +(result.protein_g * k).toFixed(1),
         carbs_g: +(result.carbs_g * k).toFixed(1),
         fat_g: +(result.fat_g * k).toFixed(1),
-        photo_url: photoUrl,
+        photo_url: urls[0] ?? null,
+        photo_urls: urls,
         source: "photo_ai",
       });
       if (error) throw error;
@@ -193,24 +227,28 @@ function PhotoScan() {
 
   const k = result ? grams / (result.grams || 100) : 1;
 
-  const uploadPhoto = async (): Promise<string | null> => {
-    if (!file || !session) return null;
-    const path = `${session.user.id}/${Date.now()}-${file.name}`;
-    const { error: upErr } = await supabase.storage.from("food-photos").upload(path, file, {
-      contentType: file.type,
-    });
-    if (upErr) return null;
-    const { data: signed } = await supabase.storage
-      .from("food-photos")
-      .createSignedUrl(path, 60 * 60 * 24 * 365);
-    return signed?.signedUrl ?? null;
+  const uploadPhotos = async (): Promise<string[]> => {
+    if (!session || photos.length === 0) return [];
+    const urls: string[] = [];
+    for (const [i, p] of photos.entries()) {
+      const path = `${session.user.id}/${Date.now()}-${i}-${p.file.name}`;
+      const { error: upErr } = await supabase.storage.from("food-photos").upload(path, p.file, {
+        contentType: p.file.type,
+      });
+      if (upErr) continue;
+      const { data: signed } = await supabase.storage
+        .from("food-photos")
+        .createSignedUrl(path, 60 * 60 * 24 * 365);
+      if (signed?.signedUrl) urls.push(signed.signedUrl);
+    }
+    return urls;
   };
 
   const saveAsFavorite = async () => {
     if (!result || !session) return;
     setSavingFav(true);
     try {
-      const photoUrl = await uploadPhoto();
+      const urls = await uploadPhotos();
       const { error } = await supabase.from("favorites").insert({
         user_id: session.user.id,
         name: result.name,
@@ -219,7 +257,8 @@ function PhotoScan() {
         protein_g: +result.protein_g.toFixed(1),
         carbs_g: +result.carbs_g.toFixed(1),
         fat_g: +result.fat_g.toFixed(1),
-        photo_url: photoUrl,
+        photo_url: urls[0] ?? null,
+        photo_urls: urls,
       });
       if (error) throw error;
       setFavSaved(true);
@@ -239,17 +278,34 @@ function PhotoScan() {
         accept="image/*"
         capture="environment"
         hidden
-        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
       />
       <input
         ref={galleryInput}
         type="file"
         accept="image/*"
+        multiple
         hidden
-        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
+      />
+      <input
+        ref={extraCameraInput}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
+      />
+      <input
+        ref={extraGalleryInput}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
       />
 
-      {!preview ? (
+      {photos.length === 0 ? (
         <div className="space-y-3">
           <button
             onClick={() => cameraInput.current?.click()}
@@ -257,7 +313,7 @@ function PhotoScan() {
           >
             <Camera className="h-10 w-10 text-primary" />
             <span className="text-base font-medium">Зробити фото</span>
-            <span className="text-xs text-muted-foreground">Камера телефона</span>
+            <span className="text-xs text-muted-foreground">Можна додати до {MAX_PHOTOS} фото</span>
           </button>
           <button
             onClick={() => galleryInput.current?.click()}
@@ -300,7 +356,61 @@ function PhotoScan() {
       ) : (
         <div className="space-y-4">
           <div className="relative overflow-hidden rounded-2xl border border-border bg-card">
-            <img src={preview} alt="" className="aspect-square w-full object-cover" />
+            <img src={photos[0].preview} alt="" className="aspect-square w-full object-cover" />
+            <div className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white">
+              Основне фото
+            </div>
+            <button
+              onClick={() => removePhoto(0)}
+              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white"
+              aria-label="Прибрати"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Уточнювальні фото (упаковка, етикетка, склад)</Label>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {photos.slice(1).map((p, idx) => (
+                <div
+                  key={idx}
+                  className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-border"
+                >
+                  <img src={p.preview} alt="" className="h-full w-full object-cover" />
+                  <button
+                    onClick={() => removePhoto(idx + 1)}
+                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white"
+                    aria-label="Прибрати"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              {photos.length < MAX_PHOTOS && (
+                <div className="flex h-20 flex-shrink-0 gap-2">
+                  <button
+                    onClick={() => extraCameraInput.current?.click()}
+                    className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-card text-muted-foreground transition hover:border-primary hover:text-primary"
+                    aria-label="Зробити ще фото"
+                  >
+                    <Camera className="h-5 w-5" />
+                    <span className="text-[10px] font-medium leading-none">Камера</span>
+                  </button>
+                  <button
+                    onClick={() => extraGalleryInput.current?.click()}
+                    className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-card text-muted-foreground transition hover:border-primary hover:text-primary"
+                    aria-label="Додати з галереї"
+                  >
+                    <Plus className="h-5 w-5" />
+                    <span className="text-[10px] font-medium leading-none">Галерея</span>
+                  </button>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Етикетка з таблицею харчової цінності дає максимальну точність — AI використає її як істину.
+            </p>
           </div>
 
           {!result && !analyzing && (
@@ -308,15 +418,12 @@ function PhotoScan() {
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={() => {
-                  setPreview(null);
-                  setFile(null);
-                }}
+                onClick={resetAll}
               >
-                Інше фото
+                Скинути
               </Button>
               <Button className="flex-1" onClick={() => analyze()}>
-                Аналізувати
+                Аналізувати {photos.length > 1 ? `(${photos.length})` : ""}
               </Button>
             </div>
           )}
@@ -324,7 +431,7 @@ function PhotoScan() {
           {analyzing && (
             <div className="flex items-center justify-center gap-2 rounded-xl bg-accent/40 p-6 text-sm">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              AI вивчає фото…
+              AI вивчає {photos.length > 1 ? `${photos.length} фото` : "фото"}…
             </div>
           )}
 
@@ -380,7 +487,17 @@ function PhotoScan() {
               {result.needs_clarification && result.clarification_question && (
                 <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-600" />
-                  <span>{result.clarification_question}</span>
+                  <div className="flex-1 space-y-1.5">
+                    <div>{result.clarification_question}</div>
+                    {photos.length < MAX_PHOTOS && (
+                      <button
+                        onClick={() => extraGalleryInput.current?.click()}
+                        className="text-[11px] font-semibold text-amber-700 underline"
+                      >
+                        + Додати уточнювальне фото
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -520,11 +637,7 @@ function PhotoScan() {
                 <Button
                   variant="outline"
                   className="flex-1"
-                  onClick={() => {
-                    setResult(null);
-                    setPreview(null);
-                    setFile(null);
-                  }}
+                  onClick={resetAll}
                 >
                   Скасувати
                 </Button>
