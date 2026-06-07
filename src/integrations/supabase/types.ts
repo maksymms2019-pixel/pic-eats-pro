@@ -67,6 +67,7 @@ export type Database = {
           last_used_at: string | null
           name: string
           photo_url: string | null
+          photo_urls: string[]
           protein_g: number
           use_count: number
           user_id: string
@@ -81,6 +82,7 @@ export type Database = {
           last_used_at?: string | null
           name: string
           photo_url?: string | null
+          photo_urls?: string[]
           protein_g?: number
           use_count?: number
           user_id: string
@@ -95,6 +97,7 @@ export type Database = {
           last_used_at?: string | null
           name?: string
           photo_url?: string | null
+          photo_urls?: string[]
           protein_g?: number
           use_count?: number
           user_id?: string
@@ -115,6 +118,7 @@ export type Database = {
           name: string
           notes: string | null
           photo_url: string | null
+          photo_urls: string[]
           protein_g: number
           source: string | null
           updated_at: string
@@ -133,6 +137,7 @@ export type Database = {
           name: string
           notes?: string | null
           photo_url?: string | null
+          photo_urls?: string[]
           protein_g?: number
           source?: string | null
           updated_at?: string
@@ -151,6 +156,7 @@ export type Database = {
           name?: string
           notes?: string | null
           photo_url?: string | null
+          photo_urls?: string[]
           protein_g?: number
           source?: string | null
           updated_at?: string

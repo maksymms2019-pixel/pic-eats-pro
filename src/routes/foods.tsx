@@ -202,14 +202,38 @@ function Favs() {
           key={f.id}
           className="flex items-center gap-3 rounded-xl border border-border bg-card p-2.5"
         >
-          <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
-            {f.photo_url ? (
-              <img src={f.photo_url} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                <Utensils className="h-5 w-5" />
-              </div>
-            )}
+          <div className="flex flex-shrink-0 items-center gap-1">
+            {(() => {
+              const urls = (f.photo_urls && f.photo_urls.length
+                ? f.photo_urls
+                : f.photo_url
+                  ? [f.photo_url]
+                  : []) as string[];
+              if (urls.length === 0) {
+                return (
+                  <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                    <Utensils className="h-5 w-5" />
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <img
+                    src={urls[0]}
+                    alt=""
+                    className="h-14 w-14 rounded-lg object-cover"
+                  />
+                  {urls.slice(1, 3).map((u, i) => (
+                    <img
+                      key={i}
+                      src={u}
+                      alt=""
+                      className="hidden h-14 w-8 rounded-md object-cover sm:block"
+                    />
+                  ))}
+                </>
+              );
+            })()}
           </div>
           <button
             onClick={() => log(f)}

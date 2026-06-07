@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/AppLayout";
 import { MacroRings } from "@/components/MacroRings";
 import { todayISO } from "@/lib/nutrition";
-import { Trash2, Camera, Scale } from "lucide-react";
+import { Trash2, Camera, Scale, Heart, X } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,8 @@ function TodayPage() {
   const { session } = useAuth();
   const qc = useQueryClient();
   const date = todayISO();
+  const [lightbox, setLightbox] = useState<string[] | null>(null);
+  const [favIds, setFavIds] = useState<Set<string>>(new Set());
 
   const { data: profile } = useQuery({
     queryKey: ["profile", session?.user.id],
@@ -68,6 +70,36 @@ function TodayPage() {
       toast.success("Видалено");
     },
   });
+
+  const saveFav = async (e: {
+    id: string;
+    name: string;
+    grams: number | string;
+    calories: number | string;
+    protein_g: number | string;
+    carbs_g: number | string;
+    fat_g: number | string;
+    photo_url: string | null;
+    photo_urls?: string[] | null;
+  }) => {
+    if (!session || favIds.has(e.id)) return;
+    const { error } = await supabase.from("favorites").insert({
+      user_id: session.user.id,
+      name: e.name,
+      grams: Number(e.grams),
+      calories: Number(e.calories),
+      protein_g: Number(e.protein_g),
+      carbs_g: Number(e.carbs_g),
+      fat_g: Number(e.fat_g),
+      photo_url: e.photo_url,
+      photo_urls: e.photo_urls ?? (e.photo_url ? [e.photo_url] : []),
+    });
+    if (error) toast.error(error.message);
+    else {
+      setFavIds((s) => new Set(s).add(e.id));
+      toast.success("В Мої страви");
+    }
+  };
 
   const totals = (entries ?? []).reduce(
     (a, e) => ({
@@ -206,11 +238,22 @@ function TodayPage() {
                 className="flex items-center gap-3 rounded-xl border border-border bg-card p-3"
               >
                 {e.photo_url ? (
-                  <img
-                    src={e.photo_url}
-                    alt=""
-                    className="h-12 w-12 rounded-lg object-cover"
-                  />
+                  <button
+                    onClick={() => {
+                      const urls = (e.photo_urls && e.photo_urls.length
+                        ? e.photo_urls
+                        : [e.photo_url]) as string[];
+                      setLightbox(urls);
+                    }}
+                    className="active:scale-95"
+                    aria-label="Переглянути фото"
+                  >
+                    <img
+                      src={e.photo_url}
+                      alt=""
+                      className="h-12 w-12 rounded-lg object-cover"
+                    />
+                  </button>
                 ) : (
                   <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-accent text-xl">
                     🍽️
@@ -227,13 +270,23 @@ function TodayPage() {
                   <div className="text-sm font-semibold">{Math.round(Number(e.calories))}</div>
                   <div className="text-[10px] text-muted-foreground">ккал</div>
                 </div>
-                <button
-                  onClick={() => del.mutate(e.id)}
-                  className="p-1 text-muted-foreground hover:text-destructive"
-                  aria-label="Видалити"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => saveFav(e as never)}
+                    className={`p-1 ${favIds.has(e.id) ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
+                    aria-label="В улюблені"
+                    disabled={favIds.has(e.id)}
+                  >
+                    <Heart className={`h-4 w-4 ${favIds.has(e.id) ? "fill-primary" : ""}`} />
+                  </button>
+                  <button
+                    onClick={() => del.mutate(e.id)}
+                    className="p-1 text-muted-foreground hover:text-destructive"
+                    aria-label="Видалити"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -247,6 +300,34 @@ function TodayPage() {
         <Camera className="h-5 w-5" />
         Сфотографувати їжу
       </Link>
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/90 p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            onClick={() => setLightbox(null)}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white"
+            aria-label="Закрити"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <div
+            className="flex max-h-[80vh] w-full max-w-md flex-col gap-2 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {lightbox.map((u, i) => (
+              <img
+                key={i}
+                src={u}
+                alt=""
+                className="w-full rounded-xl object-contain"
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
