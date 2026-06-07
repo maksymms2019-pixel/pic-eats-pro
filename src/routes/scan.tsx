@@ -130,7 +130,7 @@ function PhotoScan() {
   const resetAll = () => {
     setPhotos([]);
     setResult(null);
-    setFile(null as never);
+    setFavSaved(false);
   };
 
   const analyze = async (opts?: { hint?: string; previous?: AnalyzeResult; nameOnly?: string; nameOnlyGrams?: number }) => {
