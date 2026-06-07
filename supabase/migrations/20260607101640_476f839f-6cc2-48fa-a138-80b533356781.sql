@@ -1,0 +1,2 @@
+ALTER TABLE public.food_entries ADD COLUMN IF NOT EXISTS photo_urls text[] NOT NULL DEFAULT '{}'::text[];
+ALTER TABLE public.favorites ADD COLUMN IF NOT EXISTS photo_urls text[] NOT NULL DEFAULT '{}'::text[];
