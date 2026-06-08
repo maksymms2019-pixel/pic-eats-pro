@@ -71,16 +71,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
             const Icon = t.icon;
             const active = location.pathname === t.to || location.pathname.startsWith(t.to + "/");
             if ("primary" in t && t.primary) {
+              const isActive = location.pathname === t.to;
               return (
                 <div key={t.to} className="relative flex flex-col items-center justify-end pb-1">
                   <Link
                     to={t.to}
                     aria-label="Сканувати"
-                    className="absolute -top-6 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 ring-4 ring-card transition active:scale-95"
+                    className={`absolute -top-6 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 ring-4 ring-card transition active:scale-95 ${
+                      isActive ? "scale-105" : ""
+                    }`}
                   >
                     <Icon className="h-6 w-6" />
                   </Link>
-                  <span className="mt-9 text-[10px] font-medium leading-none text-muted-foreground">
+                  <span className={`mt-9 text-[10px] font-medium leading-none ${isActive ? "text-primary" : "text-muted-foreground"}`}>
                     Скан
                   </span>
                 </div>
