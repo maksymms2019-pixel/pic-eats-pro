@@ -447,7 +447,16 @@ function PhotoScan() {
                   Розпізнано
                 </div>
                 <div className="text-lg font-semibold">{result.name}</div>
-                {result.confidence && (
+                {result.source === "openfoodfacts" ? (
+                  <a
+                    href={result.source_url || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary"
+                  >
+                    📦 За даними виробника
+                  </a>
+                ) : result.confidence && (
                   <div className="mt-1 inline-flex rounded-full bg-accent px-2 py-0.5 text-[10px] uppercase tracking-wide">
                     Впевненість: {result.confidence}
                   </div>
