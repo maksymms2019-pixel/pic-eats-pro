@@ -1,6 +1,64 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 
+type OffNutriments = {
+  "energy-kcal_100g"?: number;
+  proteins_100g?: number;
+  carbohydrates_100g?: number;
+  fat_100g?: number;
+};
+type OffProduct = {
+  product_name?: string;
+  brands?: string;
+  quantity?: string;
+  image_url?: string;
+  code?: string;
+  nutriments?: OffNutriments;
+};
+
+function parseQuantityGrams(q?: string): number | undefined {
+  if (!q) return undefined;
+  const m = q.match(/(\d+(?:[.,]\d+)?)\s*(g|г|ml|мл|kg|кг|l|л)/i);
+  if (!m) return undefined;
+  const n = parseFloat(m[1].replace(",", "."));
+  const u = m[2].toLowerCase();
+  if (u === "g" || u === "г" || u === "ml" || u === "мл") return Math.round(n);
+  if (u === "kg" || u === "кг" || u === "l" || u === "л") return Math.round(n * 1000);
+  return undefined;
+}
+
+function pickBestOff(products: OffProduct[]): OffProduct | undefined {
+  return products.find(
+    (p) => p.nutriments && Number(p.nutriments["energy-kcal_100g"]) > 0
+  );
+}
+
+function buildOffResult(p: OffProduct, packageGrams: number, fallbackName?: string) {
+  const n = p.nutriments!;
+  const per100 = {
+    c: Number(n["energy-kcal_100g"]) || 0,
+    p: Number(n.proteins_100g) || 0,
+    cb: Number(n.carbohydrates_100g) || 0,
+    f: Number(n.fat_100g) || 0,
+  };
+  const k = packageGrams / 100;
+  const name = [p.brands?.split(",")[0]?.trim(), p.product_name].filter(Boolean).join(" ").trim() || fallbackName || "Продукт";
+  return {
+    name,
+    grams: packageGrams,
+    calories: Math.round(per100.c * k),
+    protein_g: Math.round(per100.p * k * 10) / 10,
+    carbs_g: Math.round(per100.cb * k * 10) / 10,
+    fat_g: Math.round(per100.f * k * 10) / 10,
+    confidence: "high",
+    source: "openfoodfacts",
+    source_url: p.code ? `https://world.openfoodfacts.org/product/${p.code}` : undefined,
+    brand: p.brands?.split(",")[0]?.trim(),
+    is_branded_packaged: true,
+    package_grams: packageGrams,
+  };
+}
+
 type PrevItem = {
   name: string;
   grams: number;
@@ -51,7 +109,36 @@ export const Route = createFileRoute("/api/analyze-food")({
           previous?: PrevResult;
           name_only?: string;
           name_only_grams?: number;
+          barcode?: string;
         };
+
+        // Direct barcode path — skip AI, query OFF
+        if (body.barcode) {
+          try {
+            const r = await fetch(
+              `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(body.barcode)}.json`
+            );
+            const j = (await r.json()) as { status?: number; product?: OffProduct };
+            const off = j.status === 1 ? j.product : undefined;
+            if (off?.nutriments) {
+              const pg = parseQuantityGrams(off.quantity) ?? 100;
+              return new Response(
+                JSON.stringify(buildOffResult(off, pg)),
+                { headers: { "Content-Type": "application/json" } }
+              );
+            }
+            return new Response(JSON.stringify({ error: "not found" }), {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            });
+          } catch {
+            return new Response(JSON.stringify({ error: "OFF error" }), {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+
         const images: string[] = body.imagesBase64?.length
           ? body.imagesBase64
           : body.imageBase64
@@ -116,6 +203,7 @@ export const Route = createFileRoute("/api/analyze-food")({
         const sys = `Ти професійний дієтолог-аналітик з 15-річним досвідом оцінки калорійності страв за фотографією. Твоя ціль — МАКСИМАЛЬНА ТОЧНІСТЬ і ДЕТЕРМІНОВАНІСТЬ (однакове фото = однаковий результат).
 
 АЛГОРИТМ (виконуй СУВОРО по кроках):
+0a. КРИТИЧНО: спочатку визнач — це ФАБРИЧНО УПАКОВАНИЙ БРЕНДОВИЙ ПРОДУКТ (батончик Snickers/Mars/Twix/KitKat/Bounty, чіпси Lays/Pringles, шоколад Milka/Roshen/Korona, газований напій Coca-Cola/Pepsi/Fanta, енергетик Red Bull/Burn, йогурт у баночці Activia/Danone, печиво Oreo, упакована гранола тощо)? Якщо ТАК — НЕ ВГАДУЙ ккал на око. Постав is_branded_packaged=true, дай чистий brand і product_name_clean, search_query (англ., оптимальний для пошуку: "snickers chocolate bar"), package_grams з упаковки (якщо видно "50 g" чи "330 ml" — постав це число). У такому випадку калорії/Б/Ж/В підрахує сам додаток через базу — твоя оцінка може бути приблизною, головне — правильно ідентифікувати бренд+продукт+вагу пакування.
 0. Якщо є фото з ЕТИКЕТКОЮ — починай з неї: прочитай таблицю харчової цінності та запиши офіційні значення на 100г.
 1. Перерахуй ВСІ видимі компоненти страви окремо (тісто/хліб, м'ясо, овочі, сир, соус, олія тощо).
 2. Для кожного компонента оціни вагу в грамах. Референси: тарілка ~26см, столова ложка ~15г олії, чашка ~250мл, куряче філе середнє ~150г, яйце ~55г, скиба хліба ~25г.
@@ -155,6 +243,9 @@ export const Route = createFileRoute("/api/analyze-food")({
    • Шоколад молочний: 545 ккал (Б8 Ж32 В55)
    • Печиво вівсяне: 440 ккал (Б6 Ж16 В68)
    • Банан: 90 ккал; яблуко: 50 ккал; авокадо: 160 ккал
+  • Snickers 50г: 250 ккал (Б4 Ж12 В33); Mars 51г: 230 ккал; Twix 50г: 250 ккал; KitKat 4-пальчик 41.5г: 210 ккал; Bounty 57г: 280 ккал
+  • Coca-Cola 330мл: 140 ккал (В35); Pepsi 330мл: 140 ккал; Fanta 330мл: 165 ккал; Red Bull 250мл: 115 ккал
+  • Milka шоколад: 530 ккал/100г; Pringles: 535 ккал/100г; Lays: 540 ккал/100г; Oreo печиво: 480 ккал/100г
 5. ОБОВ'ЯЗКОВО: перевір, що Б×4 + В×4 + Ж×9 ≈ ккал (похибка ≤10%). Якщо не сходиться — перерахуй макроси, бо ВОНИ правдиві.
 6. Sanity-чек: ккал/г має бути в межах 0.2–9.0. Поза межами — перерахуй.
 7. Якщо страва неоднозначна (вид м'яса, наявність олії/соусу) — needs_clarification=true + конкретне коротке питання. Запропонуй користувачу додати уточнювальне фото (упаковка, склад) або написати назву.
@@ -224,6 +315,11 @@ export const Route = createFileRoute("/api/analyze-food")({
                       assumptions: { type: "string" },
                       needs_clarification: { type: "boolean" },
                       clarification_question: { type: "string" },
+                      is_branded_packaged: { type: "boolean" },
+                      brand: { type: "string" },
+                      product_name_clean: { type: "string" },
+                      search_query: { type: "string" },
+                      package_grams: { type: "number" },
                       items: {
                         type: "array",
                         items: {
@@ -278,8 +374,44 @@ export const Route = createFileRoute("/api/analyze-food")({
             protein_g: number;
             carbs_g: number;
             fat_g: number;
+            is_branded_packaged?: boolean;
+            brand?: string;
+            product_name_clean?: string;
+            search_query?: string;
+            package_grams?: number;
             [k: string]: unknown;
           };
+
+          // Branded path — try Open Food Facts for ground truth
+          if (parsed.is_branded_packaged) {
+            const query = (parsed.search_query || `${parsed.brand ?? ""} ${parsed.product_name_clean ?? parsed.name}`.trim()).trim();
+            if (query) {
+              try {
+                const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=5&fields=product_name,brands,nutriments,quantity,image_url,code`;
+                const r = await fetch(url, { headers: { "User-Agent": "CalorAI/1.0" } });
+                if (r.ok) {
+                  const j = (await r.json()) as { products?: OffProduct[] };
+                  const best = pickBestOff(j.products ?? []);
+                  if (best?.nutriments && Number(best.nutriments["energy-kcal_100g"]) > 0) {
+                    const pg = parseQuantityGrams(best.quantity) ?? parsed.package_grams ?? Math.round(parsed.grams) ?? 100;
+                    return new Response(JSON.stringify(buildOffResult(best, pg, parsed.name)), {
+                      headers: { "Content-Type": "application/json" },
+                    });
+                  }
+                }
+              } catch {
+                // fall through to AI estimate
+              }
+            }
+            // OFF lookup failed — keep AI estimate but flag low confidence
+            (parsed as { confidence?: string }).confidence = "low";
+            if (!parsed.clarification_question) {
+              (parsed as { clarification_question?: string; needs_clarification?: boolean }).clarification_question =
+                "Не знайшов цей продукт у базі — підкажи точну назву чи скільки грамів у пакуванні?";
+              (parsed as { needs_clarification?: boolean }).needs_clarification = true;
+            }
+          }
+
           // Server-side energy balance normalization
           const fromMacros =
             Number(parsed.protein_g) * 4 +

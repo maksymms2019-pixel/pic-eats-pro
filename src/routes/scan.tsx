@@ -31,6 +31,11 @@ type AnalyzeResult = {
   assumptions?: string;
   needs_clarification?: boolean;
   clarification_question?: string;
+  source?: string;
+  source_url?: string;
+  brand?: string;
+  is_branded_packaged?: boolean;
+  package_grams?: number;
   items?: Array<{
     name: string;
     grams: number;
@@ -162,7 +167,7 @@ function PhotoScan() {
       }
       const j = (await resp.json()) as AnalyzeResult;
       setResult(j);
-      setGrams(Math.round(j.grams) || 100);
+      setGrams(Math.round(j.package_grams || j.grams) || 100);
       setHint("");
       setShowManual(false);
       setFavSaved(false);
@@ -442,7 +447,16 @@ function PhotoScan() {
                   Розпізнано
                 </div>
                 <div className="text-lg font-semibold">{result.name}</div>
-                {result.confidence && (
+                {result.source === "openfoodfacts" ? (
+                  <a
+                    href={result.source_url || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary"
+                  >
+                    📦 За даними виробника
+                  </a>
+                ) : result.confidence && (
                   <div className="mt-1 inline-flex rounded-full bg-accent px-2 py-0.5 text-[10px] uppercase tracking-wide">
                     Впевненість: {result.confidence}
                   </div>
@@ -523,7 +537,7 @@ function PhotoScan() {
                 <Stat v={(result.carbs_g * k).toFixed(1)} l="В" />
               </div>
 
-              {(() => {
+              {result.source !== "openfoodfacts" && (() => {
                 const fromMacros =
                   result.protein_g * 4 + result.carbs_g * 4 + result.fat_g * 9;
                 const ok = fromMacros > 0 && Math.abs(result.calories - fromMacros) / fromMacros <= 0.1;

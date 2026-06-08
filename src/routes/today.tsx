@@ -5,9 +5,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/AppLayout";
 import { MacroRings } from "@/components/MacroRings";
 import { todayISO } from "@/lib/nutrition";
-import { Trash2, Camera, Scale, Heart, X } from "lucide-react";
+import { Trash2, Camera, Scale, Heart, X, MoreVertical, Copy, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -32,7 +32,11 @@ function TodayPage() {
   const qc = useQueryClient();
   const date = todayISO();
   const [lightbox, setLightbox] = useState<string[] | null>(null);
+  const [lightboxIdx, setLightboxIdx] = useState(0);
   const [favIds, setFavIds] = useState<Set<string>>(new Set());
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editGrams, setEditGrams] = useState(100);
 
   const { data: profile } = useQuery({
     queryKey: ["profile", session?.user.id],
@@ -70,6 +74,78 @@ function TodayPage() {
       toast.success("Видалено");
     },
   });
+
+  type EntryLike = {
+    meal: "breakfast" | "lunch" | "dinner" | "snack";
+    name: string;
+    grams: number | string;
+    calories: number | string;
+    protein_g: number | string;
+    carbs_g: number | string;
+    fat_g: number | string;
+    photo_url: string | null;
+    photo_urls?: string[] | null;
+  };
+  const duplicate = async (e: EntryLike) => {
+    if (!session) return;
+    const { error } = await supabase.from("food_entries").insert({
+      user_id: session.user.id,
+      meal: e.meal,
+      name: e.name,
+      grams: Number(e.grams),
+      calories: Number(e.calories),
+      protein_g: Number(e.protein_g),
+      carbs_g: Number(e.carbs_g),
+      fat_g: Number(e.fat_g),
+      photo_url: e.photo_url,
+      photo_urls: e.photo_urls ?? [],
+      source: "duplicate",
+    });
+    if (error) toast.error(error.message);
+    else {
+      qc.invalidateQueries({ queryKey: ["entries", date] });
+      toast.success("Повторено");
+    }
+  };
+
+  const saveEdit = async (orig: {
+    id: string;
+    grams: number | string;
+    calories: number | string;
+    protein_g: number | string;
+    carbs_g: number | string;
+    fat_g: number | string;
+  }) => {
+    const baseG = Number(orig.grams) || 1;
+    const k = editGrams / baseG;
+    const { error } = await supabase
+      .from("food_entries")
+      .update({
+        grams: editGrams,
+        calories: Math.round(Number(orig.calories) * k),
+        protein_g: +(Number(orig.protein_g) * k).toFixed(1),
+        carbs_g: +(Number(orig.carbs_g) * k).toFixed(1),
+        fat_g: +(Number(orig.fat_g) * k).toFixed(1),
+      })
+      .eq("id", orig.id);
+    if (error) toast.error(error.message);
+    else {
+      setEditId(null);
+      qc.invalidateQueries({ queryKey: ["entries", date] });
+      toast.success("Оновлено");
+    }
+  };
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(null);
+      if (e.key === "ArrowLeft") setLightboxIdx((i) => Math.max(0, i - 1));
+      if (e.key === "ArrowRight") setLightboxIdx((i) => Math.min(lightbox.length - 1, i + 1));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
 
   const saveFav = async (e: {
     id: string;
@@ -244,6 +320,7 @@ function TodayPage() {
                         ? e.photo_urls
                         : [e.photo_url]) as string[];
                       setLightbox(urls);
+                      setLightboxIdx(0);
                     }}
                     className="active:scale-95"
                     aria-label="Переглянути фото"
@@ -261,31 +338,77 @@ function TodayPage() {
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="truncate text-sm font-medium">{e.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {Math.round(Number(e.grams))} г · Б {Math.round(Number(e.protein_g))} ·
-                    Ж {Math.round(Number(e.fat_g))} · В {Math.round(Number(e.carbs_g))}
-                  </div>
+                  {editId === e.id ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <Input
+                        type="range"
+                        min={10}
+                        max={1000}
+                        step={5}
+                        value={editGrams}
+                        onChange={(ev) => setEditGrams(parseInt(ev.target.value))}
+                        className="h-2 flex-1"
+                      />
+                      <span className="w-12 text-right text-xs font-semibold">{editGrams} г</span>
+                      <Button size="sm" className="h-7 px-2" onClick={() => saveEdit(e as never)}>OK</Button>
+                      <button onClick={() => setEditId(null)} className="text-xs text-muted-foreground">×</button>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      {Math.round(Number(e.grams))} г · Б {Math.round(Number(e.protein_g))} ·
+                      Ж {Math.round(Number(e.fat_g))} · В {Math.round(Number(e.carbs_g))}
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   <div className="text-sm font-semibold">{Math.round(Number(e.calories))}</div>
                   <div className="text-[10px] text-muted-foreground">ккал</div>
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="relative">
                   <button
-                    onClick={() => saveFav(e as never)}
-                    className={`p-1 ${favIds.has(e.id) ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
-                    aria-label="В улюблені"
-                    disabled={favIds.has(e.id)}
+                    onClick={() => setMenuId(menuId === e.id ? null : e.id)}
+                    className="p-1 text-muted-foreground hover:text-foreground"
+                    aria-label="Дії"
                   >
-                    <Heart className={`h-4 w-4 ${favIds.has(e.id) ? "fill-primary" : ""}`} />
+                    <MoreVertical className="h-4 w-4" />
                   </button>
-                  <button
-                    onClick={() => del.mutate(e.id)}
-                    className="p-1 text-muted-foreground hover:text-destructive"
-                    aria-label="Видалити"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {menuId === e.id && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => setMenuId(null)} />
+                      <div className="absolute right-0 top-7 z-30 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+                        <button
+                          onClick={() => {
+                            setEditId(e.id);
+                            setEditGrams(Math.round(Number(e.grams)) || 100);
+                            setMenuId(null);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-accent"
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Змінити порцію
+                        </button>
+                        <button
+                          onClick={() => { duplicate(e as never); setMenuId(null); }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-accent"
+                        >
+                          <Copy className="h-3.5 w-3.5" /> Повторити
+                        </button>
+                        <button
+                          onClick={() => { saveFav(e as never); setMenuId(null); }}
+                          disabled={favIds.has(e.id)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-accent disabled:opacity-50"
+                        >
+                          <Heart className={`h-3.5 w-3.5 ${favIds.has(e.id) ? "fill-primary text-primary" : ""}`} />
+                          {favIds.has(e.id) ? "В улюблених" : "В улюблені"}
+                        </button>
+                        <button
+                          onClick={() => { del.mutate(e.id); setMenuId(null); }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Видалити
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -303,7 +426,7 @@ function TodayPage() {
 
       {lightbox && (
         <div
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/90 p-4"
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/95 p-4"
           onClick={() => setLightbox(null)}
         >
           <button
@@ -314,17 +437,49 @@ function TodayPage() {
             <X className="h-5 w-5" />
           </button>
           <div
-            className="flex max-h-[80vh] w-full max-w-md flex-col gap-2 overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
+            className="relative flex w-full max-w-2xl items-center justify-center"
+            onClick={(ev) => ev.stopPropagation()}
           >
-            {lightbox.map((u, i) => (
-              <img
-                key={i}
-                src={u}
-                alt=""
-                className="w-full rounded-xl object-contain"
-              />
-            ))}
+            {lightbox.length > 1 && lightboxIdx > 0 && (
+              <button
+                onClick={() => setLightboxIdx((i) => i - 1)}
+                className="absolute left-0 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white"
+                aria-label="Попереднє"
+              >
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+            )}
+            <img
+              src={lightbox[lightboxIdx]}
+              alt=""
+              className="max-h-[80vh] w-full rounded-xl object-contain"
+            />
+            {lightbox.length > 1 && lightboxIdx < lightbox.length - 1 && (
+              <button
+                onClick={() => setLightboxIdx((i) => i + 1)}
+                className="absolute right-0 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white"
+                aria-label="Наступне"
+              >
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            )}
+          </div>
+          {lightbox.length > 1 && (
+            <div className="mt-3 flex items-center gap-1.5" onClick={(ev) => ev.stopPropagation()}>
+              {lightbox.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setLightboxIdx(i)}
+                  className={`h-1.5 rounded-full transition-all ${
+                    i === lightboxIdx ? "w-6 bg-white" : "w-1.5 bg-white/40"
+                  }`}
+                  aria-label={`Фото ${i + 1}`}
+                />
+              ))}
+            </div>
+          )}
+          <div className="mt-2 text-xs text-white/70">
+            {lightboxIdx + 1} / {lightbox.length}
           </div>
         </div>
       )}
