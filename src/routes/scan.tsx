@@ -31,6 +31,11 @@ type AnalyzeResult = {
   assumptions?: string;
   needs_clarification?: boolean;
   clarification_question?: string;
+  source?: string;
+  source_url?: string;
+  brand?: string;
+  is_branded_packaged?: boolean;
+  package_grams?: number;
   items?: Array<{
     name: string;
     grams: number;
@@ -162,7 +167,7 @@ function PhotoScan() {
       }
       const j = (await resp.json()) as AnalyzeResult;
       setResult(j);
-      setGrams(Math.round(j.grams) || 100);
+      setGrams(Math.round(j.package_grams || j.grams) || 100);
       setHint("");
       setShowManual(false);
       setFavSaved(false);
