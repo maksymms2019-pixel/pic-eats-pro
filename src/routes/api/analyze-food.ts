@@ -1,6 +1,64 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 
+type OffNutriments = {
+  "energy-kcal_100g"?: number;
+  proteins_100g?: number;
+  carbohydrates_100g?: number;
+  fat_100g?: number;
+};
+type OffProduct = {
+  product_name?: string;
+  brands?: string;
+  quantity?: string;
+  image_url?: string;
+  code?: string;
+  nutriments?: OffNutriments;
+};
+
+function parseQuantityGrams(q?: string): number | undefined {
+  if (!q) return undefined;
+  const m = q.match(/(\d+(?:[.,]\d+)?)\s*(g|г|ml|мл|kg|кг|l|л)/i);
+  if (!m) return undefined;
+  const n = parseFloat(m[1].replace(",", "."));
+  const u = m[2].toLowerCase();
+  if (u === "g" || u === "г" || u === "ml" || u === "мл") return Math.round(n);
+  if (u === "kg" || u === "кг" || u === "l" || u === "л") return Math.round(n * 1000);
+  return undefined;
+}
+
+function pickBestOff(products: OffProduct[]): OffProduct | undefined {
+  return products.find(
+    (p) => p.nutriments && Number(p.nutriments["energy-kcal_100g"]) > 0
+  );
+}
+
+function buildOffResult(p: OffProduct, packageGrams: number, fallbackName?: string) {
+  const n = p.nutriments!;
+  const per100 = {
+    c: Number(n["energy-kcal_100g"]) || 0,
+    p: Number(n.proteins_100g) || 0,
+    cb: Number(n.carbohydrates_100g) || 0,
+    f: Number(n.fat_100g) || 0,
+  };
+  const k = packageGrams / 100;
+  const name = [p.brands?.split(",")[0]?.trim(), p.product_name].filter(Boolean).join(" ").trim() || fallbackName || "Продукт";
+  return {
+    name,
+    grams: packageGrams,
+    calories: Math.round(per100.c * k),
+    protein_g: Math.round(per100.p * k * 10) / 10,
+    carbs_g: Math.round(per100.cb * k * 10) / 10,
+    fat_g: Math.round(per100.f * k * 10) / 10,
+    confidence: "high",
+    source: "openfoodfacts",
+    source_url: p.code ? `https://world.openfoodfacts.org/product/${p.code}` : undefined,
+    brand: p.brands?.split(",")[0]?.trim(),
+    is_branded_packaged: true,
+    package_grams: packageGrams,
+  };
+}
+
 type PrevItem = {
   name: string;
   grams: number;
