@@ -75,19 +75,30 @@ function TodayPage() {
     },
   });
 
-  const duplicate = async (e: Record<string, unknown>) => {
+  type EntryLike = {
+    meal: "breakfast" | "lunch" | "dinner" | "snack";
+    name: string;
+    grams: number | string;
+    calories: number | string;
+    protein_g: number | string;
+    carbs_g: number | string;
+    fat_g: number | string;
+    photo_url: string | null;
+    photo_urls?: string[] | null;
+  };
+  const duplicate = async (e: EntryLike) => {
     if (!session) return;
     const { error } = await supabase.from("food_entries").insert({
       user_id: session.user.id,
       meal: e.meal,
       name: e.name,
-      grams: e.grams,
-      calories: e.calories,
-      protein_g: e.protein_g,
-      carbs_g: e.carbs_g,
-      fat_g: e.fat_g,
+      grams: Number(e.grams),
+      calories: Number(e.calories),
+      protein_g: Number(e.protein_g),
+      carbs_g: Number(e.carbs_g),
+      fat_g: Number(e.fat_g),
       photo_url: e.photo_url,
-      photo_urls: e.photo_urls,
+      photo_urls: e.photo_urls ?? [],
       source: "duplicate",
     });
     if (error) toast.error(error.message);
