@@ -537,7 +537,7 @@ function PhotoScan() {
                 <Stat v={(result.carbs_g * k).toFixed(1)} l="В" />
               </div>
 
-              {(() => {
+              {result.source !== "openfoodfacts" && (() => {
                 const fromMacros =
                   result.protein_g * 4 + result.carbs_g * 4 + result.fat_g * 9;
                 const ok = fromMacros > 0 && Math.abs(result.calories - fromMacros) / fromMacros <= 0.1;
