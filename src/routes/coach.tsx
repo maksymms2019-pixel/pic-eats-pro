@@ -44,60 +44,24 @@ function CoachPage() {
     setInput("");
     setBusy(true);
     try {
-      const resp = await fetch("/api/coach", {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/coach`;
+      const resp = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({ messages: next }),
       });
-      if (!resp.ok || !resp.body) {
+      if (!resp.ok) {
         if (resp.status === 429) toast.error("Забагато запитів");
         else if (resp.status === 402) toast.error("Закінчились кредити AI");
         else toast.error("Помилка коуча");
-        setBusy(false);
         return;
       }
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let acc = "";
-      let done = false;
-      setMessages([...next, { role: "assistant", content: "" }]);
-      while (!done) {
-        const { value, done: d } = await reader.read();
-        if (d) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          let line = buf.slice(0, nl);
-          buf = buf.slice(nl + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.startsWith(":") || line.trim() === "") continue;
-          if (!line.startsWith("data: ")) continue;
-          const json = line.slice(6).trim();
-          if (json === "[DONE]") {
-            done = true;
-            break;
-          }
-          try {
-            const p = JSON.parse(json);
-            const delta = p.choices?.[0]?.delta?.content;
-            if (delta) {
-              acc += delta;
-              setMessages((prev) => {
-                const copy = prev.slice();
-                copy[copy.length - 1] = { role: "assistant", content: acc };
-                return copy;
-              });
-            }
-          } catch {
-            buf = line + "\n" + buf;
-            break;
-          }
-        }
-      }
+      const { content } = (await resp.json()) as { content: string };
+      setMessages([...next, { role: "assistant", content: content || "…" }]);
     } finally {
       setBusy(false);
     }

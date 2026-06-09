@@ -19,8 +19,6 @@ import { Route as DiaryRouteImport } from './routes/diary'
 import { Route as CoachRouteImport } from './routes/coach'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiCoachRouteImport } from './routes/api/coach'
-import { Route as ApiAnalyzeFoodRouteImport } from './routes/api/analyze-food'
 
 const TodayRoute = TodayRouteImport.update({
   id: '/today',
@@ -72,16 +70,6 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiCoachRoute = ApiCoachRouteImport.update({
-  id: '/api/coach',
-  path: '/api/coach',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAnalyzeFoodRoute = ApiAnalyzeFoodRouteImport.update({
-  id: '/api/analyze-food',
-  path: '/api/analyze-food',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -94,8 +82,6 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/scan': typeof ScanRoute
   '/today': typeof TodayRoute
-  '/api/analyze-food': typeof ApiAnalyzeFoodRoute
-  '/api/coach': typeof ApiCoachRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -108,8 +94,6 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/scan': typeof ScanRoute
   '/today': typeof TodayRoute
-  '/api/analyze-food': typeof ApiAnalyzeFoodRoute
-  '/api/coach': typeof ApiCoachRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -123,8 +107,6 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/scan': typeof ScanRoute
   '/today': typeof TodayRoute
-  '/api/analyze-food': typeof ApiAnalyzeFoodRoute
-  '/api/coach': typeof ApiCoachRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -139,8 +121,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/scan'
     | '/today'
-    | '/api/analyze-food'
-    | '/api/coach'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -153,8 +133,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/scan'
     | '/today'
-    | '/api/analyze-food'
-    | '/api/coach'
   id:
     | '__root__'
     | '/'
@@ -167,8 +145,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/scan'
     | '/today'
-    | '/api/analyze-food'
-    | '/api/coach'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -182,8 +158,6 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ScanRoute: typeof ScanRoute
   TodayRoute: typeof TodayRoute
-  ApiAnalyzeFoodRoute: typeof ApiAnalyzeFoodRoute
-  ApiCoachRoute: typeof ApiCoachRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -258,20 +232,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/coach': {
-      id: '/api/coach'
-      path: '/api/coach'
-      fullPath: '/api/coach'
-      preLoaderRoute: typeof ApiCoachRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/analyze-food': {
-      id: '/api/analyze-food'
-      path: '/api/analyze-food'
-      fullPath: '/api/analyze-food'
-      preLoaderRoute: typeof ApiAnalyzeFoodRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -286,8 +246,6 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ScanRoute: ScanRoute,
   TodayRoute: TodayRoute,
-  ApiAnalyzeFoodRoute: ApiAnalyzeFoodRoute,
-  ApiCoachRoute: ApiCoachRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

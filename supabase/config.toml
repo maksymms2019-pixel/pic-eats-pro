@@ -1,1 +1,7 @@
 project_id = "astnuailjdbtlshajtel"
+
+[functions.analyze-food]
+verify_jwt = false
+
+[functions.coach]
+verify_jwt = false
