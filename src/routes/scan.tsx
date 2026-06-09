@@ -143,11 +143,13 @@ function PhotoScan() {
     if (photos.length === 0 && !opts?.nameOnly) return;
     setAnalyzing(true);
     try {
-      const resp = await fetch("/api/analyze-food", {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-food`;
+      const resp = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify({
           imagesBase64: photos.map((p) => p.preview),
