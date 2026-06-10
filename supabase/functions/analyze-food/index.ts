@@ -8,6 +8,38 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Простий in-memory кеш для стабільності: однаковий запит → однакова відповідь
+// (в межах часу життя одного інстансу edge-функції). Знімає випадковість моделі.
+const CACHE = new Map<string, { at: number; data: unknown }>();
+const CACHE_TTL_MS = 1000 * 60 * 30; // 30 хв
+const CACHE_MAX = 200;
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function cacheGet(key: string) {
+  const v = CACHE.get(key);
+  if (!v) return undefined;
+  if (Date.now() - v.at > CACHE_TTL_MS) {
+    CACHE.delete(key);
+    return undefined;
+  }
+  return v.data;
+}
+
+function cacheSet(key: string, data: unknown) {
+  if (CACHE.size >= CACHE_MAX) {
+    const oldest = CACHE.keys().next().value;
+    if (oldest) CACHE.delete(oldest);
+  }
+  CACHE.set(key, { at: Date.now(), data });
+}
+
 type OffNutriments = {
   "energy-kcal_100g"?: number;
   proteins_100g?: number;
