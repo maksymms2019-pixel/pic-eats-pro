@@ -320,7 +320,9 @@ Deno.serve(async (req) => {
             const best = pickBestOff(j.products ?? []);
             if (best?.nutriments && Number(best.nutriments["energy-kcal_100g"]) > 0) {
               const pg = parseQuantityGrams(best.quantity) ?? parsed.package_grams ?? Math.round(parsed.grams) ?? 100;
-              return json(buildOffResult(best, pg, parsed.name));
+              const offResult = buildOffResult(best, pg, parsed.name);
+              cacheSet(cacheKey, offResult);
+              return json(offResult);
             }
           }
         } catch { /* fallthrough */ }
@@ -346,6 +348,7 @@ Deno.serve(async (req) => {
     parsed.protein_g = Math.round(parsed.protein_g * 10) / 10;
     parsed.carbs_g = Math.round(parsed.carbs_g * 10) / 10;
     parsed.fat_g = Math.round(parsed.fat_g * 10) / 10;
+    cacheSet(cacheKey, parsed);
     return json(parsed);
   } catch {
     return json({ error: "parse error" }, 500);
