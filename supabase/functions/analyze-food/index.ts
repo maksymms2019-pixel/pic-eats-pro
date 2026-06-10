@@ -8,6 +8,38 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Простий in-memory кеш для стабільності: однаковий запит → однакова відповідь
+// (в межах часу життя одного інстансу edge-функції). Знімає випадковість моделі.
+const CACHE = new Map<string, { at: number; data: unknown }>();
+const CACHE_TTL_MS = 1000 * 60 * 30; // 30 хв
+const CACHE_MAX = 200;
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function cacheGet(key: string) {
+  const v = CACHE.get(key);
+  if (!v) return undefined;
+  if (Date.now() - v.at > CACHE_TTL_MS) {
+    CACHE.delete(key);
+    return undefined;
+  }
+  return v.data;
+}
+
+function cacheSet(key: string, data: unknown) {
+  if (CACHE.size >= CACHE_MAX) {
+    const oldest = CACHE.keys().next().value;
+    if (oldest) CACHE.delete(oldest);
+  }
+  CACHE.set(key, { at: Date.now(), data });
+}
+
 type OffNutriments = {
   "energy-kcal_100g"?: number;
   proteins_100g?: number;
@@ -128,6 +160,19 @@ Deno.serve(async (req) => {
   const key = Deno.env.get("LOVABLE_API_KEY");
   if (!key) return json({ error: "LOVABLE_API_KEY missing" }, 500);
 
+  // Стабільність: кеш по hash(вхід). Підказка користувача змінює ключ.
+  const cacheKey = await sha256Hex(
+    JSON.stringify({
+      imgs: images.map((i) => i.slice(0, 256) + ":" + i.length),
+      hint: body.hint ?? null,
+      previous: body.previous?.name ?? null,
+      name_only: body.name_only ?? null,
+      name_only_grams: body.name_only_grams ?? null,
+    })
+  );
+  const cached = cacheGet(cacheKey);
+  if (cached) return json(cached);
+
   const [{ data: prof }, { data: favs }, { data: recent }] = await Promise.all([
     supabase.from("profiles").select("sex,weight_kg,height_cm").eq("id", u.user.id).maybeSingle(),
     supabase.from("favorites").select("name,grams,calories,protein_g,carbs_g,fat_g").order("use_count", { ascending: false }).limit(20),
@@ -152,15 +197,21 @@ Deno.serve(async (req) => {
 
   const sys = `Ти професійний дієтолог-аналітик. МАКСИМАЛЬНА ТОЧНІСТЬ і ДЕТЕРМІНОВАНІСТЬ.
 
--1. АНТИ-ГАЛЮЦИНАЦІЯ: рахуй ТІЛЬКИ те, що ВИДНО на фото. ЗАБОРОНЕНО додавати продукти "за асоціацією".
+-1. АНТИ-ГАЛЮЦИНАЦІЯ (НАЙВАЖЛИВІШЕ):
+   • Рахуй ТІЛЬКИ те, що ВИДНО на фото. Не додавай "за асоціацією" (бутерброди ≠ печиво; кава ≠ цукор; салат ≠ олія, якщо не блищить).
+   • Якщо на фото ОДНА страва (наприклад бутерброд, тарілка борщу, шматок піци) — items[] МАЄ бути ПУСТИЙ.
+   • Не вигадуй гарніри, соуси, напої, фрукти. Лише видиме.
+   • Якщо щось сумнівне (соус під сиром, олія в макаронах) — це йде в поле "assumptions" текстом, а не як окремий item.
 0a. Якщо це ФАБРИЧНО УПАКОВАНИЙ БРЕНДОВИЙ ПРОДУКТ (Snickers, Coca-Cola, Pringles, Roshen тощо) — постав is_branded_packaged=true, дай brand, product_name_clean, search_query англ., package_grams.
+   • ЗАБОРОНЕНО самостійно вигадувати ккал для брендового продукту — лише грубі orientiri в anchors; точні цифри підтягне база.
 0. Якщо є етикетка — починай з неї.
 1. Перерахуй ВИДИМІ компоненти, оціни вагу. Референси: тарілка ~26см, ложка ~15г олії, чашка ~250мл, філе ~150г, яйце ~55г, скиба хліба ~25г.
 2. Якорі (ккал/100г, готовий): хліб білий 250, куряче філе варене 165 / смажене 210, рис варений 130, гречка 110, картопля смажена 190, макарони 130, сир твердий 350, олія 900, майонез 680, гранола 470, борщ 50, шаурма 220, піца 260, чіпси 530, шоколад 545, банан 90, яблуко 50.
    • Snickers 50г: 250 ккал; Mars 51г: 230; Twix 50г: 250; KitKat 41.5г: 210; Coca-Cola 330мл: 140; Red Bull 250мл: 115.
 3. Б×4 + В×4 + Ж×9 ≈ ккал (≤10%). Інакше — перерахуй.
-4. items[] лише якщо чітко видно кілька різних страв. Для одного блюда — лиши пустим.
+4. items[] — ТІЛЬКИ якщо чітко видно ≥2 РІЗНИХ страв/продуктів окремо (наприклад: котлета + пюре + салат). Для одного блюда — items[] ПУСТИЙ.
 5. Якщо неоднозначно — needs_clarification=true + коротке питання.
+6. Будь стабільним: на однаковому фото — однакова відповідь до грама.
 
 Якщо користувач уточнив — ДОВІРЯЙ.
 Якщо нема їжі — name="" needs_clarification=true.${multiPhotoBlock}
@@ -269,7 +320,9 @@ Deno.serve(async (req) => {
             const best = pickBestOff(j.products ?? []);
             if (best?.nutriments && Number(best.nutriments["energy-kcal_100g"]) > 0) {
               const pg = parseQuantityGrams(best.quantity) ?? parsed.package_grams ?? Math.round(parsed.grams) ?? 100;
-              return json(buildOffResult(best, pg, parsed.name));
+              const offResult = buildOffResult(best, pg, parsed.name);
+              cacheSet(cacheKey, offResult);
+              return json(offResult);
             }
           }
         } catch { /* fallthrough */ }
@@ -295,6 +348,7 @@ Deno.serve(async (req) => {
     parsed.protein_g = Math.round(parsed.protein_g * 10) / 10;
     parsed.carbs_g = Math.round(parsed.carbs_g * 10) / 10;
     parsed.fat_g = Math.round(parsed.fat_g * 10) / 10;
+    cacheSet(cacheKey, parsed);
     return json(parsed);
   } catch {
     return json({ error: "parse error" }, 500);

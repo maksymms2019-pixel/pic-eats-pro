@@ -4,6 +4,8 @@ import { useAuth } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/AppLayout";
 import { MacroRings } from "@/components/MacroRings";
+import { StreakBadge } from "@/components/StreakBadge";
+import { QuickAdd } from "@/components/QuickAdd";
 import { todayISO } from "@/lib/nutrition";
 import { Trash2, Camera, Scale, Heart, X, MoreVertical, Copy, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
@@ -242,7 +244,12 @@ function TodayPage() {
         <p className="text-sm text-muted-foreground">
           {new Date().toLocaleDateString("uk-UA", { weekday: "long", day: "numeric", month: "long" })}
         </p>
-        <h1 className="text-2xl font-bold">Привіт{profile?.display_name ? `, ${profile.display_name}` : ""}!</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">
+            Привіт{profile?.display_name ? `, ${profile.display_name}` : ""}!
+          </h1>
+          <StreakBadge />
+        </div>
       </header>
 
       <MacroRings
@@ -255,6 +262,8 @@ function TodayPage() {
         fat={totals.fat}
         fatTarget={tf}
       />
+
+      <QuickAdd />
 
       <div className="rounded-2xl border border-border bg-card p-3">
         <div className="flex items-center gap-3">
