@@ -59,10 +59,10 @@ export function QuickAdd() {
         source: "favorite_quick",
       });
       if (error) throw error;
-      // підвищуємо use_count, щоб порядок жив
+      // оновлюємо last_used_at, щоб порядок жив
       await supabase
         .from("favorites")
-        .update({ use_count: undefined, last_used_at: new Date().toISOString() })
+        .update({ last_used_at: new Date().toISOString() })
         .eq("id", f.id);
     },
     onSuccess: () => {
