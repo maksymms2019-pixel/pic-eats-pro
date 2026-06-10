@@ -6,6 +6,7 @@ import { AppLayout } from "@/components/AppLayout";
 import { MacroRings } from "@/components/MacroRings";
 import { StreakBadge } from "@/components/StreakBadge";
 import { QuickAdd } from "@/components/QuickAdd";
+import { WeeklyHeatmap } from "@/components/WeeklyHeatmap";
 import { todayISO } from "@/lib/nutrition";
 import { Trash2, Camera, Scale, Heart, X, MoreVertical, Copy, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
@@ -262,6 +263,8 @@ function TodayPage() {
         fat={totals.fat}
         fatTarget={tf}
       />
+
+      <WeeklyHeatmap goal={tc} />
 
       <QuickAdd />
 

@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { AppLayout } from "@/components/AppLayout";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from "recharts";
+import { WeeklyHeatmap } from "@/components/WeeklyHeatmap";
 
 export const Route = createFileRoute("/diary")({
   head: () => ({ meta: [{ title: "Щоденник — CalorAI" }] }),
@@ -97,6 +98,8 @@ function DiaryPage() {
         <Box label="Ціль" value={`${goal}`} sub="ккал" />
         <Box label="В межах" value={`${hitDays}`} sub={`з ${range}`} />
       </div>
+
+      <WeeklyHeatmap goal={goal} />
 
       <div className="rounded-2xl border border-border bg-card p-4">
         <div className="mb-2 text-sm font-medium">Калорії за день</div>

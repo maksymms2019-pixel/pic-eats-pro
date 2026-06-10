@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 interface MacroRingsProps {
   calories: number;
   caloriesTarget: number;
@@ -7,6 +9,27 @@ interface MacroRingsProps {
   carbsTarget: number;
   fat: number;
   fatTarget: number;
+}
+
+function useCountUp(target: number, ms = 600) {
+  const [v, setV] = useState(target);
+  useEffect(() => {
+    const from = v;
+    const to = target;
+    if (from === to) return;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / ms);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setV(Math.round(from + (to - from) * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+  return v;
 }
 
 function Ring({
@@ -67,16 +90,29 @@ function Ring({
 
 export function MacroRings(p: MacroRingsProps) {
   const remaining = Math.max(0, p.caloriesTarget - p.calories);
+  const over = p.calories > p.caloriesTarget;
+  const animCal = useCountUp(Math.round(p.calories));
+  // Прогноз: екстраполяція темпу до 21:00
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  const ref = Math.max(8, Math.min(21, hour));
+  const pace = ref > 8 ? p.calories / (ref - 6) : 0;
+  const predicted = Math.round(Math.max(p.calories, p.calories + pace * Math.max(0, 21 - ref)));
+  const showPred = hour >= 11 && hour < 21 && p.calories > 0;
   return (
     <div className="rounded-2xl border border-border bg-card p-6">
       <div className="flex items-center gap-6">
         <div className="relative">
-          <Ring value={p.calories} target={p.caloriesTarget} color="var(--primary)" />
+          <Ring value={p.calories} target={p.caloriesTarget} color={over ? "var(--chart-3)" : "var(--primary)"} />
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <div className="text-3xl font-bold">{Math.round(p.calories)}</div>
+            <div className="text-3xl font-bold tabular-nums">{animCal}</div>
             <div className="text-xs text-muted-foreground">з {p.caloriesTarget} ккал</div>
-            <div className="mt-1 text-xs text-primary">
-              {remaining > 0 ? `−${remaining} залишилось` : "ціль виконана"}
+            <div className={`mt-1 text-xs ${over ? "text-orange-500" : "text-primary"}`}>
+              {over
+                ? `+${p.calories - p.caloriesTarget} понад ціль`
+                : remaining > 0
+                  ? `−${remaining} залишилось`
+                  : "ціль виконана"}
             </div>
           </div>
         </div>
@@ -86,6 +122,14 @@ export function MacroRings(p: MacroRingsProps) {
           <MacroBar label="Вуглеводи" value={p.carbs} target={p.carbsTarget} color="var(--chart-4)" />
         </div>
       </div>
+      {showPred && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl bg-accent/40 px-3 py-2 text-xs">
+          <span className="text-muted-foreground">Прогноз до 21:00 при цьому темпі:</span>
+          <span className={`font-semibold tabular-nums ${predicted > p.caloriesTarget ? "text-orange-500" : "text-primary"}`}>
+            ~{predicted} ккал
+          </span>
+        </div>
+      )}
     </div>
   );
 }
