@@ -160,6 +160,19 @@ Deno.serve(async (req) => {
   const key = Deno.env.get("LOVABLE_API_KEY");
   if (!key) return json({ error: "LOVABLE_API_KEY missing" }, 500);
 
+  // Стабільність: кеш по hash(вхід). Підказка користувача змінює ключ.
+  const cacheKey = await sha256Hex(
+    JSON.stringify({
+      imgs: images.map((i) => i.slice(0, 256) + ":" + i.length),
+      hint: body.hint ?? null,
+      previous: body.previous?.name ?? null,
+      name_only: body.name_only ?? null,
+      name_only_grams: body.name_only_grams ?? null,
+    })
+  );
+  const cached = cacheGet(cacheKey);
+  if (cached) return json(cached);
+
   const [{ data: prof }, { data: favs }, { data: recent }] = await Promise.all([
     supabase.from("profiles").select("sex,weight_kg,height_cm").eq("id", u.user.id).maybeSingle(),
     supabase.from("favorites").select("name,grams,calories,protein_g,carbs_g,fat_g").order("use_count", { ascending: false }).limit(20),
