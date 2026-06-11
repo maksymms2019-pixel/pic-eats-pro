@@ -143,756 +143,322 @@ function PhotoScan() {
     if (photos.length === 0 && !opts?.nameOnly) return;
     setAnalyzing(true);
     try {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-food`;
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-        },
-        body: JSON.stringify({
-          imagesBase64: photos.map((p) => p.preview),
-          hint: opts?.hint,
-          previous: opts?.previous,
-          name_only: opts?.nameOnly,
-          name_only_grams: opts?.nameOnlyGrams,
-        }),
-      });
-      if (!resp.ok) {
-        const t = await resp.text();
-        if (resp.status === 429) toast.error("Забагато запитів. Спробуй через хвилину.");
-        else if (resp.status === 402) toast.error("Закінчились кредити AI. Поповни план Lovable.");
-        else if (!navigator.onLine) toast.error("Немає інтернету — спробуй ще раз.");
-        else toast.error(t || "Помилка AI");
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        toast.error("Відсутній VITE_GEMINI_API_KEY у налаштуваннях");
+        setAnalyzing(false);
         return;
       }
-      const j = (await resp.json()) as AnalyzeResult;
+
+      let prompt = `Ти — професійний дієтолог і експерт з аналізу харчування. Твоє завдання — проаналізувати страву на фото (або за наданою назвою) та повернути JSON-відповідь строго у вказаному форматі.
+      
+      Формат відповіді (чистий JSON, без markdown-розмітки):
+      {
+        "name": "Назва страви українською мовою",
+        "grams": 150,
+        "calories": 250,
+        "protein_g": 15.5,
+        "carbs_g": 30.0,
+        "fat_g": 8.2,
+        "confidence": "Висока",
+        "assumptions": "Коротке припущення щодо інгредієнтів",
+        "needs_clarification": false,
+        "clarification_question": "",
+        "items": []
+      }`;
+
+      if (opts?.hint) prompt += `\nУточнення: "${opts.hint}"`;
+      if (opts?.nameOnly) prompt += `\nНазва страви: "${opts.nameOnly}", вага: ${opts.nameOnlyGrams || 150}г`;
+
+      let responseText = "";
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+      if (opts?.nameOnly) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json" }
+          })
+        });
+        if (!response.ok) throw new Error("Gemini Error");
+        const data = await response.json();
+        responseText = data.candidates[0].content.parts[0].text;
+      } else {
+        const inlineDataParts = photos.map((p) => ({
+          inlineData: { data: p.preview.split(",")[1], mimeType: p.file.type || "image/jpeg" }
+        }));
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }, ...inlineDataParts] }],
+            generationConfig: { responseMimeType: "application/json" }
+          })
+        });
+        if (!response.ok) throw new Error("Gemini Error");
+        const data = await response.json();
+        responseText = data.candidates[0].content.parts[0].text;
+      }
+
+      const j = JSON.parse(responseText.trim()) as AnalyzeResult;
       setResult(j);
       setGrams(Math.round(j.package_grams || j.grams) || 100);
       setHint("");
       setShowManual(false);
       setFavSaved(false);
+    } catch (error) {
+      console.error(error);
+      toast.error("Не вдалося розпізнати страву. Перевір ключ або інтернет.");
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const removeItem = (idx: number) => {
-    if (!result?.items) return;
-    const items = result.items.filter((_, i) => i !== idx);
-    const totals = items.reduce(
-      (a, it) => ({
-        grams: a.grams + Number(it.grams),
-        calories: a.calories + Number(it.calories),
-        protein_g: a.protein_g + Number(it.protein_g),
-        carbs_g: a.carbs_g + Number(it.carbs_g),
-        fat_g: a.fat_g + Number(it.fat_g),
-      }),
-      { grams: 0, calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
-    );
-    setResult({
-      ...result,
-      items,
-      grams: totals.grams || result.grams,
-      calories: totals.calories,
-      protein_g: totals.protein_g,
-      carbs_g: totals.carbs_g,
-      fat_g: totals.fat_g,
-    });
-    setGrams(Math.round(totals.grams) || grams);
-  };
-
-  const save = async () => {
-    if (!result || !session) return;
+  const saveLog = async () => {
+    if (!session || !result) return;
     setSaving(true);
     try {
-      const urls = await uploadPhotos();
-      const k = grams / (result.grams || 100);
-      const { error } = await supabase.from("food_entries").insert({
+      const mul = grams / (result.package_grams || result.grams || 100);
+      const { error } = await supabase.from("nutrition_logs").insert({
         user_id: session.user.id,
-        meal,
-        name: result.name,
-        grams,
-        calories: Math.round(result.calories * k),
-        protein_g: +(result.protein_g * k).toFixed(1),
-        carbs_g: +(result.carbs_g * k).toFixed(1),
-        fat_g: +(result.fat_g * k).toFixed(1),
-        photo_url: urls[0] ?? null,
-        photo_urls: urls,
-        source: "photo_ai",
+        meal_type: meal,
+        food_name: result.name,
+        grams: grams,
+        calories: Math.round(result.calories * mul),
+        protein_g: Number((result.protein_g * mul).toFixed(1)),
+        carbs_g: Number((result.carbs_g * mul).toFixed(1)),
+        fat_g: Number((result.fat_g * mul).toFixed(1)),
+        logged_at: new Date().toISOString(),
       });
       if (error) throw error;
-      toast.success("Додано до щоденника");
+      toast.success("Страву успішно додано до щоденника!");
       navigate({ to: "/today" });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Помилка");
+      console.error(e);
+      toast.error("Помилка при збереженні");
     } finally {
       setSaving(false);
     }
   };
 
-  const k = result ? grams / (result.grams || 100) : 1;
-
-  const uploadPhotos = async (): Promise<string[]> => {
-    if (!session || photos.length === 0) return [];
-    const urls: string[] = [];
-    for (const [i, p] of photos.entries()) {
-      const path = `${session.user.id}/${Date.now()}-${i}-${p.file.name}`;
-      const { error: upErr } = await supabase.storage.from("food-photos").upload(path, p.file, {
-        contentType: p.file.type,
-      });
-      if (upErr) continue;
-      const { data: signed } = await supabase.storage
-        .from("food-photos")
-        .createSignedUrl(path, 60 * 60 * 24 * 365);
-      if (signed?.signedUrl) urls.push(signed.signedUrl);
-    }
-    return urls;
-  };
-
-  const saveAsFavorite = async () => {
-    if (!result || !session) return;
+  const saveToFav = async () => {
+    if (!session || !result) return;
     setSavingFav(true);
     try {
-      const urls = await uploadPhotos();
-      const { error } = await supabase.from("favorites").insert({
+      const baseGrams = result.package_grams || result.grams || 100;
+      const { error } = await supabase.from("favorite_foods").insert({
         user_id: session.user.id,
         name: result.name,
-        grams: Math.round(result.grams) || 100,
-        calories: Math.round(result.calories),
-        protein_g: +result.protein_g.toFixed(1),
-        carbs_g: +result.carbs_g.toFixed(1),
-        fat_g: +result.fat_g.toFixed(1),
-        photo_url: urls[0] ?? null,
-        photo_urls: urls,
+        calories_per_100g: Math.round((result.calories / baseGrams) * 100),
+        protein_per_100g: Number(((result.protein_g / baseGrams) * 100).toFixed(1)),
+        carbs_per_100g: Number(((result.carbs_g / baseGrams) * 100).toFixed(1)),
+        fat_per_100g: Number(((result.fat_g / baseGrams) * 100).toFixed(1)),
       });
       if (error) throw error;
+      toast.success("Додано в улюблені!");
       setFavSaved(true);
-      toast.success("Збережено в Мої страви");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Не вдалося зберегти");
+      console.error(e);
+      toast.error("Не вдалося додати в обране");
     } finally {
       setSavingFav(false);
     }
   };
 
-  return (
-    <div className="space-y-4">
-      <input
-        ref={cameraInput}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        hidden
-        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
-      />
-      <input
-        ref={galleryInput}
-        type="file"
-        accept="image/*"
-        multiple
-        hidden
-        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
-      />
-      <input
-        ref={extraCameraInput}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        hidden
-        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
-      />
-      <input
-        ref={extraGalleryInput}
-        type="file"
-        accept="image/*"
-        multiple
-        hidden
-        onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }}
-      />
+  const currentMacros = result ? macrosForGrams(result, grams) : null;
 
-      {photos.length === 0 ? (
-        <div className="space-y-3">
-          <button
+  return (
+    <div className="space-y-6 pb-24">
+      {photos.length === 0 && !result && !showManual && (
+        <div className="grid grid-cols-2 gap-4">
+          <Button
+            variant="outline"
+            className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed"
             onClick={() => cameraInput.current?.click()}
-            className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border bg-card p-10 transition hover:border-primary"
           >
-            <Camera className="h-10 w-10 text-primary" />
-            <span className="text-base font-medium">Зробити фото</span>
-            <span className="text-xs text-muted-foreground">Можна додати до {MAX_PHOTOS} фото</span>
-          </button>
-          <button
+            <Camera className="h-6 w-6 text-primary" />
+            <span className="text-xs">Зробити фото</span>
+            <input type="file" accept="image/*" capture="environment" ref={cameraInput} className="hidden" onChange={(e) => addPhotos(e.target.files)} />
+          </Button>
+          <Button
+            variant="outline"
+            className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed"
             onClick={() => galleryInput.current?.click()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card p-4 text-sm font-medium"
           >
-            <ImageIcon className="h-4 w-4" /> Вибрати з галереї
-          </button>
-          <div className="rounded-xl border border-dashed border-border bg-card p-4">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">Або без фото — за назвою:</div>
-            <div className="space-y-2">
-              <Input
-                placeholder="напр. куряче філе з рисом"
-                value={manualName}
-                onChange={(e) => setManualName(e.target.value)}
-              />
-              <div className="flex items-baseline justify-between text-xs">
-                <Label>Порція</Label>
-                <span className="font-semibold">{manualGrams} г</span>
-              </div>
-              <Input
-                type="range"
-                min={20}
-                max={800}
-                step={10}
-                value={manualGrams}
-                onChange={(e) => setManualGrams(parseInt(e.target.value))}
-              />
-              <Button
-                className="w-full"
-                disabled={!manualName.trim() || analyzing}
-                onClick={() =>
-                  analyze({ nameOnly: manualName.trim(), nameOnlyGrams: manualGrams })
-                }
-              >
-                {analyzing ? "Рахую…" : "Розрахувати"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="relative overflow-hidden rounded-2xl border border-border bg-card">
-            <img src={photos[0].preview} alt="" className="aspect-square w-full object-cover" />
-            <div className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white">
-              Основне фото
-            </div>
-            <button
-              onClick={() => removePhoto(0)}
-              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white"
-              aria-label="Прибрати"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs">Уточнювальні фото (упаковка, етикетка, склад)</Label>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {photos.slice(1).map((p, idx) => (
-                <div
-                  key={idx}
-                  className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-border"
-                >
-                  <img src={p.preview} alt="" className="h-full w-full object-cover" />
-                  <button
-                    onClick={() => removePhoto(idx + 1)}
-                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white"
-                    aria-label="Прибрати"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-              {photos.length < MAX_PHOTOS && (
-                <div className="flex h-20 flex-shrink-0 gap-2">
-                  <button
-                    onClick={() => extraCameraInput.current?.click()}
-                    className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-card text-muted-foreground transition hover:border-primary hover:text-primary"
-                    aria-label="Зробити ще фото"
-                  >
-                    <Camera className="h-5 w-5" />
-                    <span className="text-[10px] font-medium leading-none">Камера</span>
-                  </button>
-                  <button
-                    onClick={() => extraGalleryInput.current?.click()}
-                    className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border bg-card text-muted-foreground transition hover:border-primary hover:text-primary"
-                    aria-label="Додати з галереї"
-                  >
-                    <Plus className="h-5 w-5" />
-                    <span className="text-[10px] font-medium leading-none">Галерея</span>
-                  </button>
-                </div>
-              )}
-            </div>
-            <p className="text-[10px] text-muted-foreground">
-              Етикетка з таблицею харчової цінності дає максимальну точність — AI використає її як істину.
-            </p>
-          </div>
-
-          {!result && !analyzing && (
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={resetAll}
-              >
-                Скинути
-              </Button>
-              <Button className="flex-1" onClick={() => analyze()}>
-                Аналізувати {photos.length > 1 ? `(${photos.length})` : ""}
-              </Button>
-            </div>
-          )}
-
-          {analyzing && (
-            <div className="flex items-center justify-center gap-2 rounded-xl bg-accent/40 p-6 text-sm">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              AI вивчає {photos.length > 1 ? `${photos.length} фото` : "фото"}…
-            </div>
-          )}
-
-          {result && (
-            <div className="space-y-4 rounded-2xl border border-border bg-card p-4">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Розпізнано
-                </div>
-                <div className="text-lg font-semibold">{result.name}</div>
-                {result.source === "openfoodfacts" ? (
-                  <a
-                    href={result.source_url || "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary"
-                  >
-                    📦 За даними виробника
-                  </a>
-                ) : result.confidence && (
-                  <div className="mt-1 inline-flex rounded-full bg-accent px-2 py-0.5 text-[10px] uppercase tracking-wide">
-                    Впевненість: {result.confidence}
-                  </div>
-                )}
-              </div>
-
-              {result.items && result.items.length > 0 && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Компоненти страви</Label>
-                  <div className="space-y-1">
-                    {result.items.map((it, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center gap-2 rounded-lg bg-accent/40 px-2.5 py-1.5 text-xs"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="truncate font-medium">{it.name}</div>
-                          <div className="text-muted-foreground">
-                            {Math.round(it.grams)}г · {Math.round(it.calories)} ккал
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => removeItem(idx)}
-                          className="text-muted-foreground hover:text-destructive"
-                          aria-label="Прибрати"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {result.assumptions && (
-                <div className="rounded-lg border border-dashed border-border p-2.5 text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">AI припустив: </span>
-                  {result.assumptions}
-                </div>
-              )}
-
-              {result.needs_clarification && result.clarification_question && (
-                <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-600" />
-                  <div className="flex-1 space-y-1.5">
-                    <div>{result.clarification_question}</div>
-                    {photos.length < MAX_PHOTOS && (
-                      <button
-                        onClick={() => extraGalleryInput.current?.click()}
-                        className="text-[11px] font-semibold text-amber-700 underline"
-                      >
-                        + Додати уточнювальне фото
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <div className="flex items-baseline justify-between">
-                  <Label>Порція</Label>
-                  <span className="text-lg font-semibold">{grams} г</span>
-                </div>
-                <Input
-                  type="range"
-                  min={10}
-                  max={1000}
-                  step={10}
-                  value={grams}
-                  onChange={(e) => setGrams(parseInt(e.target.value))}
-                />
-              </div>
-
-              <div className="grid grid-cols-4 gap-2 text-center">
-                <Stat v={Math.round(result.calories * k)} l="ккал" big />
-                <Stat v={(result.protein_g * k).toFixed(1)} l="Б" />
-                <Stat v={(result.fat_g * k).toFixed(1)} l="Ж" />
-                <Stat v={(result.carbs_g * k).toFixed(1)} l="В" />
-              </div>
-
-              {result.source !== "openfoodfacts" && (() => {
-                const fromMacros =
-                  result.protein_g * 4 + result.carbs_g * 4 + result.fat_g * 9;
-                const ok = fromMacros > 0 && Math.abs(result.calories - fromMacros) / fromMacros <= 0.1;
-                return (
-                  <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
-                    <Check className={`h-3 w-3 ${ok ? "text-primary" : "text-muted-foreground"}`} />
-                    Б·4+В·4+Ж·9 = {Math.round(fromMacros)} ккал {ok ? "✓" : "≈"}
-                  </div>
-                );
-              })()}
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                disabled={savingFav || favSaved}
-                onClick={saveAsFavorite}
-              >
-                <Heart className={`mr-1.5 h-4 w-4 ${favSaved ? "fill-primary text-primary" : ""}`} />
-                {favSaved ? "У моїх стравах" : savingFav ? "Зберігаю…" : "Зберегти як мою страву"}
-              </Button>
-
-              <div className="space-y-1.5 rounded-lg bg-primary/5 p-2.5">
-                <Label className="text-xs">
-                  <Sparkles className="mr-1 inline h-3 w-3 text-primary" />
-                  Уточнити для AI (підвищить точність)
-                </Label>
-                <Input
-                  placeholder="напр. це індичка ~150г, гречка ~120г, без олії"
-                  value={hint}
-                  onChange={(e) => setHint(e.target.value)}
-                />
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="flex-1"
-                    disabled={!hint.trim() || analyzing}
-                    onClick={() => analyze({ hint, previous: result })}
-                  >
-                    Перерахувати з підказкою
-                  </Button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowManual((s) => !s)}
-                  className="text-xs text-muted-foreground underline"
-                >
-                  {showManual ? "Сховати" : "Це зовсім інша страва →"}
-                </button>
-                {showManual && (
-                  <div className="space-y-2 pt-1">
-                    <Input
-                      placeholder="Точна назва страви"
-                      value={manualName}
-                      onChange={(e) => setManualName(e.target.value)}
-                    />
-                    <div className="flex items-baseline justify-between text-xs">
-                      <Label>Порція</Label>
-                      <span className="font-semibold">{manualGrams} г</span>
-                    </div>
-                    <Input
-                      type="range"
-                      min={20}
-                      max={800}
-                      step={10}
-                      value={manualGrams}
-                      onChange={(e) => setManualGrams(parseInt(e.target.value))}
-                    />
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      disabled={!manualName.trim() || analyzing}
-                      onClick={() =>
-                        analyze({ nameOnly: manualName.trim(), nameOnlyGrams: manualGrams })
-                      }
-                    >
-                      Розрахувати за назвою
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Прийом їжі</Label>
-                <div className="grid grid-cols-4 gap-1">
-                  {(
-                    [
-                      ["breakfast", "Сніданок"],
-                      ["lunch", "Обід"],
-                      ["dinner", "Вечеря"],
-                      ["snack", "Перекус"],
-                    ] as const
-                  ).map(([k2, l]) => (
-                    <button
-                      key={k2}
-                      onClick={() => setMeal(k2)}
-                      className={`rounded-md py-1.5 text-xs font-medium transition ${
-                        meal === k2
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={resetAll}
-                >
-                  Скасувати
-                </Button>
-                <Button className="flex-1" onClick={save} disabled={saving}>
-                  {saving ? "Зберігаю…" : "Додати"}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Stat({ v, l, big }: { v: number | string; l: string; big?: boolean }) {
-  return (
-    <div>
-      <div className={big ? "text-xl font-bold text-primary" : "text-base font-semibold"}>{v}</div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</div>
-    </div>
-  );
-}
-
-interface OffProduct {
-  product_name?: string;
-  brands?: string;
-  nutriments?: {
-    "energy-kcal_100g"?: number;
-    proteins_100g?: number;
-    carbohydrates_100g?: number;
-    fat_100g?: number;
-  };
-}
-
-function BarcodeScan() {
-  const { session } = useAuth();
-  const navigate = useNavigate();
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [scanning, setScanning] = useState(false);
-  const [barcode, setBarcode] = useState("");
-  const [product, setProduct] = useState<OffProduct | null>(null);
-  const [grams, setGrams] = useState(100);
-  const [meal, setMeal] = useState<"breakfast" | "lunch" | "dinner" | "snack">("snack");
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!scanning || !videoRef.current) return;
-    let stop = () => {};
-    let cancelled = false;
-    (async () => {
-      const { BrowserMultiFormatReader } = await import("@zxing/browser");
-      if (cancelled || !videoRef.current) return;
-      const reader = new BrowserMultiFormatReader();
-      reader
-        .decodeFromVideoDevice(undefined, videoRef.current, (result, _err, controls) => {
-          stop = () => controls.stop();
-          if (result) {
-            controls.stop();
-            setScanning(false);
-            lookup(result.getText());
-          }
-        })
-        .catch((e) => {
-          toast.error("Не вдалося відкрити камеру: " + (e instanceof Error ? e.message : ""));
-          setScanning(false);
-        });
-    })();
-    return () => {
-      cancelled = true;
-      stop();
-    };
-  }, [scanning]);
-
-  const lookup = async (code: string) => {
-    setBarcode(code);
-    setLoading(true);
-    setProduct(null);
-    try {
-      const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json`);
-      const j = (await r.json()) as { status?: number; product?: OffProduct };
-      if (j.status === 1 && j.product) {
-        setProduct(j.product);
-      } else {
-        toast.error("Продукт не знайдено в базі Open Food Facts");
-      }
-    } catch {
-      toast.error("Помилка пошуку");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const save = async () => {
-    if (!product || !session) return;
-    const n = product.nutriments;
-    if (!n) return;
-    setSaving(true);
-    const m = macrosForGrams(
-      {
-        c: n["energy-kcal_100g"] ?? 0,
-        p: n.proteins_100g ?? 0,
-        cb: n.carbohydrates_100g ?? 0,
-        f: n.fat_100g ?? 0,
-      },
-      grams
-    );
-    const { error } = await supabase.from("food_entries").insert({
-      user_id: session.user.id,
-      meal,
-      name: product.product_name || "Продукт",
-      grams,
-      calories: m.calories,
-      protein_g: m.protein_g,
-      carbs_g: m.carbs_g,
-      fat_g: m.fat_g,
-      source: `barcode:${barcode}`,
-    });
-    setSaving(false);
-    if (error) toast.error(error.message);
-    else {
-      toast.success("Додано");
-      navigate({ to: "/today" });
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      {!scanning && !product && (
-        <>
-          <button
-            onClick={() => setScanning(true)}
-            className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border bg-card p-10 transition hover:border-primary"
-          >
-            <Barcode className="h-10 w-10 text-primary" />
-            <span className="text-base font-medium">Сканувати штрих-код</span>
-          </button>
-          <div className="space-y-2">
-            <Label>Або введи код вручну</Label>
-            <div className="flex gap-2">
-              <Input
-                value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
-                placeholder="напр. 5901234123457"
-              />
-              <Button onClick={() => barcode && lookup(barcode)} disabled={loading}>
-                Знайти
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {scanning && (
-        <div className="space-y-2">
-          <div className="overflow-hidden rounded-2xl border border-border bg-black">
-            <video ref={videoRef} className="aspect-square w-full object-cover" />
-          </div>
-          <Button variant="outline" className="w-full" onClick={() => setScanning(false)}>
-            Скасувати
+            <ImageIcon className="h-6 w-6 text-primary" />
+            <span className="text-xs">З галереї</span>
+            <input type="file" accept="image/*" multiple ref={galleryInput} className="hidden" onChange={(e) => addPhotos(e.target.files)} />
+          </Button>
+          <Button variant="link" className="col-span-2 text-xs text-muted-foreground" onClick={() => setShowManual(true)}>
+            Ввести назву вручну
           </Button>
         </div>
       )}
 
-      {loading && (
-        <div className="flex items-center justify-center gap-2 rounded-xl bg-accent/40 p-6 text-sm">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" /> Шукаю…
+      {showManual && !result && (
+        <div className="rounded-xl border bg-card p-4 space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="font-semibold text-sm">Пошук страви через AI</h3>
+            <Button variant="ghost" size="icon" onClick={() => setShowManual(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <Label>Що ви з'їли?</Label>
+            <Input placeholder="Наприклад: гречка з куркою та огірком" value={manualName} onChange={(e) => setManualName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Приблизна вага (грамів)</Label>
+            <Input type="number" value={manualGrams} onChange={(e) => setManualGrams(Number(e.target.value))} />
+          </div>
+          <Button className="w-full gap-2" disabled={analyzing || !manualName} onClick={() => analyze({ nameOnly: manualName, nameOnlyGrams: manualGrams })}>
+            {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Проаналізувати
+          </Button>
         </div>
       )}
 
-      {product && product.nutriments && (
-        <div className="space-y-4 rounded-2xl border border-border bg-card p-4">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">{product.brands}</div>
-            <div className="text-lg font-semibold">{product.product_name || "Продукт"}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              На 100 г: {Math.round(product.nutriments["energy-kcal_100g"] ?? 0)} ккал · Б{" "}
-              {(product.nutriments.proteins_100g ?? 0).toFixed(1)} · Ж{" "}
-              {(product.nutriments.fat_100g ?? 0).toFixed(1)} · В{" "}
-              {(product.nutriments.carbohydrates_100g ?? 0).toFixed(1)}
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-baseline justify-between">
-              <Label>Порція</Label>
-              <span className="text-lg font-semibold">{grams} г</span>
-            </div>
-            <Input
-              type="range"
-              min={10}
-              max={1000}
-              step={5}
-              value={grams}
-              onChange={(e) => setGrams(parseInt(e.target.value))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Прийом їжі</Label>
-            <div className="grid grid-cols-4 gap-1">
-              {(
-                [
-                  ["breakfast", "Сніданок"],
-                  ["lunch", "Обід"],
-                  ["dinner", "Вечеря"],
-                  ["snack", "Перекус"],
-                ] as const
-              ).map(([k, l]) => (
+      {photos.length > 0 && !result && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            {photos.map((p, idx) => (
+              <div key={idx} className="relative aspect-square rounded-xl overflow-hidden bg-muted group">
+                <img src={p.preview} alt="food preview" className="h-full w-full object-cover" />
                 <button
-                  key={k}
-                  onClick={() => setMeal(k)}
-                  className={`rounded-md py-1.5 text-xs font-medium transition ${
-                    meal === k
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
-                  }`}
+                  onClick={() => removePhoto(idx)}
+                  className="absolute top-2 right-2 p-1 rounded-full bg-background/80 hover:bg-background text-foreground shadow-sm"
                 >
-                  {l}
+                  <X className="h-4 w-4" />
                 </button>
-              ))}
-            </div>
+              </div>
+            ))}
+            {photos.length < MAX_PHOTOS && (
+              <div className="grid grid-cols-1 gap-2 aspect-square">
+                <Button variant="outline" className="flex flex-col h-full border-dashed items-center justify-center gap-1 p-2" onClick={() => extraCameraInput.current?.click()}>
+                  <Camera className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-[10px] text-muted-foreground">Камера</span>
+                  <input type="file" accept="image/*" capture="environment" ref={extraCameraInput} className="hidden" onChange={(e) => addPhotos(e.target.files)} />
+                </Button>
+                <Button variant="outline" className="flex flex-col h-full border-dashed items-center justify-center gap-1 p-2" onClick={() => extraGalleryInput.current?.click()}>
+                  <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-[10px] text-muted-foreground">Галерея</span>
+                  <input type="file" accept="image/*" multiple ref={extraGalleryInput} className="hidden" onChange={(e) => addPhotos(e.target.files)} />
+                </Button>
+              </div>
+            )}
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="hint" className="text-xs">Уточнення або контекст (необов'язково)</Label>
+            <Input id="hint" placeholder="Наприклад: кава на мигдалевому молоці" value={hint} onChange={(e) => setHint(e.target.value)} />
+          </div>
+
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => {
-                setProduct(null);
-                setBarcode("");
-              }}
-            >
-              Інший
-            </Button>
-            <Button className="flex-1" onClick={save} disabled={saving}>
-              {saving ? "…" : "Додати"}
+            <Button variant="outline" className="flex-1" onClick={resetAll} disabled={analyzing}>Очистити</Button>
+            <Button className="flex-[2] gap-2" onClick={() => analyze({ hint })} disabled={analyzing}>
+              {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Аналізувати
             </Button>
           </div>
         </div>
       )}
+
+      {result && (
+        <div className="space-y-6">
+          <div className="rounded-xl border bg-card p-4 space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h2 className="text-xl font-bold">{result.name}</h2>
+                {result.brand && <p className="text-xs text-muted-foreground font-medium">{result.brand}</p>}
+                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                  Точність: <span className={result.confidence === "Висока" ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>{result.confidence || "Середня"}</span>
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={resetAll}>Новий скан</Button>
+            </div>
+
+            {result.assumptions && (
+              <div className="rounded-lg bg-muted p-2 text-xs text-muted-foreground flex items-start gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                <p>{result.assumptions}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-4 gap-2 text-center">
+              <div className="rounded-lg bg-primary/5 p-2">
+                <p className="text-xl font-bold text-primary">{currentMacros?.calories}</p>
+                <p className="text-[10px] text-muted-foreground font-medium uppercase">Ккал</p>
+              </div>
+              <div className="rounded-lg bg-muted p-2">
+                <p className="text-sm font-bold">{currentMacros?.protein_g}г</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-medium">Білки</p>
+              </div>
+              <div className="rounded-lg bg-muted p-2">
+                <p className="text-sm font-bold">{currentMacros?.carbs_g}г</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-medium">Вугл</p>
+              </div>
+              <div className="rounded-lg bg-muted p-2">
+                <p className="text-sm font-bold">{currentMacros?.fat_g}г</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-medium">Жири</p>
+              </div>
+            </div>
+
+            {result.items && result.items.length > 0 && (
+              <div className="space-y-1.5 border-t pt-3">
+                <p className="text-xs font-semibold text-muted-foreground px-0.5">Склад страви:</p>
+                {result.items.map((it, i) => (
+                  <div key={i} className="flex justify-between items-center text-xs bg-muted/30 p-2 rounded-lg">
+                    <span className="font-medium truncate max-w-[180px]">{it.name}</span>
+                    <span className="text-muted-foreground font-mono shrink-0">{it.grams}г • {it.calories} ккал</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-4 border-t pt-4">
+              <div className="flex gap-4 items-center">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="weight" className="text-xs font-semibold">Скільки ви з'їли (грамів)?</Label>
+                  <Input id="weight" type="number" value={grams} onChange={(e) => setGrams(Number(e.target.value))} className="font-semibold" />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs font-semibold">Прийом їжі</Label>
+                  <select
+                    value={meal}
+                    onChange={(e: any) => setMeal(e.target.value)}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring font-medium"
+                  >
+                    <option value="breakfast">Сніданок</option>
+                    <option value="lunch">Обід</option>
+                    <option value="dinner">Вечеря</option>
+                    <option value="snack">Перекус</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" size="icon" onClick={saveToFav} disabled={savingFav || favSaved} className="shrink-0 h-11 w-11">
+                  {favSaved ? <Check className="h-4 w-4 text-emerald-500" /> : <Heart className="h-4 w-4" />}
+                </Button>
+                <Button className="flex-1 h-11 gap-2 font-medium shadow-sm" onClick={saveLog} disabled={saving}>
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Додати в щоденник
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BarcodeScan() {
+  return (
+    <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground space-y-2">
+      <Barcode className="h-8 w-8 mx-auto text-muted-foreground/60" />
+      <p className="text-sm font-medium">Сканування штрих-кодів незабаром</p>
+      <p className="text-xs text-muted-foreground/80">Використовуйте вкладку Фото для аналізу страв за допомогою AI.</p>
     </div>
   );
 }
