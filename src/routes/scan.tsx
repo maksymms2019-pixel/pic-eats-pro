@@ -150,10 +150,10 @@ function PhotoScan() {
         return;
       }
 
-      let prompt = `Ти — професійний дієтолог і експерт з аналізу харчування. Твоє завдання — проаналізувати страву на фото (або за наданою назвою) та повернути JSON-відповідь строго у вказаному форматі.`;
+      let prompt = `Ти — професійний фітнес-дієтолог. Твоє завдання — детально проаналізувати страву на фотографії (або за наданою назвою) та розрахувати загальну вагу страви у грамах, калорійність (ккал) та макронутрієнти (білки, вуглеводи, жири у грамах) для цієї порції. Зроби максимально реалістичну та точну оцінку на основі візуальних даних. Обов'язково заповни поля значеннями вище за нуль.`;
 
-      if (opts?.hint) prompt += `\nУточнення: "${opts.hint}"`;
-      if (opts?.nameOnly) prompt += `\nНазва страви: "${opts.nameOnly}", вага: ${opts.nameOnlyGrams || 150}г`;
+      if (opts?.hint) prompt += `\nДодатковий контекст від користувача: "${opts.hint}"`;
+      if (opts?.nameOnly) prompt += `\nНазва страви: "${opts.nameOnly}", очікувана вага порції: ${opts.nameOnlyGrams || 150}г. Розрахуй макроси саме для цієї ваги.`;
 
       let responseText = "";
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -285,7 +285,7 @@ function PhotoScan() {
             onClick={() => cameraInput.current?.click()}
           >
             <Camera className="h-6 w-6 text-primary" />
-            <span className="text-xs">Зробити фото</span>
+            <span className="text-xs">Зробити photo</span>
             <input type="file" accept="image/*" capture="environment" ref={cameraInput} className="hidden" onChange={(e) => addPhotos(e.target.files)} />
           </Button>
           <Button
