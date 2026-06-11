@@ -150,22 +150,7 @@ function PhotoScan() {
         return;
       }
 
-      let prompt = `Ти — професійний дієтолог і експерт з аналізу харчування. Твоє завдання — проаналізувати страву на фото (або за наданою назвою) та повернути JSON-відповідь строго у вказаному форматі.
-      
-      Формат відповіді (чистий JSON, без markdown-розмітки):
-      {
-        "name": "Назва страви українською мовою",
-        "grams": 150,
-        "calories": 250,
-        "protein_g": 15.5,
-        "carbs_g": 30.0,
-        "fat_g": 8.2,
-        "confidence": "Висока",
-        "assumptions": "Коротке припущення щодо інгредієнтів",
-        "needs_clarification": false,
-        "clarification_question": "",
-        "items": []
-      }`;
+      let prompt = `Ти — професійний дієтолог і експерт з аналізу харчування. Твоє завдання — проаналізувати страву на фото (або за наданою назвою) та повернути JSON-відповідь строго у вказаному форматі.`;
 
       if (opts?.hint) prompt += `\nУточнення: "${opts.hint}"`;
       if (opts?.nameOnly) prompt += `\nНазва страви: "${opts.nameOnly}", вага: ${opts.nameOnlyGrams || 150}г`;
@@ -173,13 +158,33 @@ function PhotoScan() {
       let responseText = "";
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
+      const geminiConfig = {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING" },
+            grams: { type: "INTEGER" },
+            calories: { type: "INTEGER" },
+            protein_g: { type: "NUMBER" },
+            carbs_g: { type: "NUMBER" },
+            fat_g: { type: "NUMBER" },
+            confidence: { type: "STRING" },
+            assumptions: { type: "STRING" },
+            needs_clarification: { type: "BOOLEAN" },
+            clarification_question: { type: "STRING" }
+          },
+          required: ["name", "grams", "calories", "protein_g", "carbs_g", "fat_g"]
+        }
+      };
+
       if (opts?.nameOnly) {
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: "application/json" }
+            generationConfig: geminiConfig
           })
         });
         if (!response.ok) throw new Error("Gemini Error");
@@ -195,7 +200,7 @@ function PhotoScan() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }, ...inlineDataParts] }],
-            generationConfig: { responseMimeType: "application/json" }
+            generationConfig: geminiConfig
           })
         });
         if (!response.ok) throw new Error("Gemini Error");
@@ -387,19 +392,19 @@ function PhotoScan() {
 
             <div className="grid grid-cols-4 gap-2 text-center">
               <div className="rounded-lg bg-primary/5 p-2">
-                <p className="text-xl font-bold text-primary">{currentMacros?.calories}</p>
+                <p className="text-xl font-bold text-primary">{currentMacros?.calories || 0}</p>
                 <p className="text-[10px] text-muted-foreground font-medium uppercase">Ккал</p>
               </div>
               <div className="rounded-lg bg-muted p-2">
-                <p className="text-sm font-bold">{currentMacros?.protein_g}г</p>
+                <p className="text-sm font-bold">{currentMacros?.protein_g || 0}г</p>
                 <p className="text-[10px] text-muted-foreground uppercase font-medium">Білки</p>
               </div>
               <div className="rounded-lg bg-muted p-2">
-                <p className="text-sm font-bold">{currentMacros?.carbs_g}г</p>
+                <p className="text-sm font-bold">{currentMacros?.carbs_g || 0}г</p>
                 <p className="text-[10px] text-muted-foreground uppercase font-medium">Вугл</p>
               </div>
               <div className="rounded-lg bg-muted p-2">
-                <p className="text-sm font-bold">{currentMacros?.fat_g}г</p>
+                <p className="text-sm font-bold">{currentMacros?.fat_g || 0}г</p>
                 <p className="text-[10px] text-muted-foreground uppercase font-medium">Жири</p>
               </div>
             </div>
