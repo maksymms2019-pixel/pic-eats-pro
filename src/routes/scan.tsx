@@ -145,48 +145,38 @@ function PhotoScan() {
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) {
-        toast.error("Відсутній VITE_GEMINI_API_KEY у налаштуваннях");
+        toast.error("Відсутній VITE_GEMINI_API_KEY у налаштуваннях Vercel");
         setAnalyzing(false);
         return;
       }
 
-            let prompt = `Ти — професійний фітнес-дієтолог та експерт із підрахунку калорій. 
-Твоє завдання — детально проаналізувати страву на фотографії (або за наданою назвою) та розрахувати:
-1. Загальну вагу цієї порції у грамах (grams).
-2. Калорійність (calories) у ккал для ВСІЄЇ порції.
-3. Макронутрієнти у грамах для ВСІЄЇ порції: білки (protein_g), вуглеводи (carbs_g), жири (fat_g).
+      let prompt = `Ти — професійний фітнес-дієтолог та експерт із точного підрахунку калорій.
+Твоє завдання — детально проаналізувати страву на фотографії (або за наданою назвою) та розрахувати Ккал і БЖВ для ВСІЄЇ порції.
 
-КРИТИЧНО ВАЖЛИВО: 
-- НЕ ПОВЕРТАЙ нулі (0) для calories, protein_g, carbs_g, fat_g, якщо на фото є їжа.
-- Проаналізуй кожен інгредієнт окремо (наприклад: яйця, олія для смаження, хліб), згадай їхню стандартну калорійність на 100г, оціни їхню вагу на око і сумуй показники.
-- Навіть якщо точна вага невідома, зроби максимально реалістичне експертне припущення. Значення обов'язково мають бути більшими за нуль!
-- Назва страви (name) має бути українською мовою.`;
+Покроковий алгоритм розрахунку:
+1. Визнач усі інгредієнти у страві (наприклад: яйця курячі, олія для смаження, хліб житній).
+2. Подумки оціни вагу кожного інгредієнта у грамах.
+3. Згадай їхню калорійність та БЖВ на 100г.
+4. Порахуй фінальні показники для цієї порції та підсумуй їх. Показники ОБОВ'ЯЗКОВО мають бути реальними числами, строго більшими за нуль (НЕ ПОВЕРТАЙ 0!).
+
+Ти повинен відповісти СТРОГО у форматі JSON без будь-якого зайвого тексту чи розмітки markdown. Формат відповіді має бути точно таким:
+{
+  "name": "Назва страви українською",
+  "grams": 180,
+  "calories": 365,
+  "protein_g": 18.5,
+  "carbs_g": 24.2,
+  "fat_g": 19.8,
+  "confidence": "Висока",
+  "assumptions": "Короткий опис розрахунку: 2 яйця (100г) - 150 ккал, хліб (50г) - 130 ккал, олія (10г) - 85 ккал."
+}`;
 
       if (opts?.hint) prompt += `\nДодатковий контекст від користувача: "${opts.hint}"`;
       if (opts?.nameOnly) prompt += `\nНазва страви: "${opts.nameOnly}", очікувана вага порції: ${opts.nameOnlyGrams || 150}г. Розрахуй макроси саме для цієї ваги.`;
 
-      let responseText = "";
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
-      const geminiConfig = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            name: { type: "STRING", description: "Назва страви українською мовою" },
-            grams: { type: "INTEGER", description: "Загальна вага порції в грамах, наприклад 180" },
-            calories: { type: "INTEGER", description: "Калорійність всієї порції в ккал, строго більше 0" },
-            protein_g: { type: "NUMBER", description: "Білки в грамах для всієї порції, строго більше 0" },
-            carbs_g: { type: "NUMBER", description: "Вуглеводи в грамах для всієї порції, строго більше 0" },
-            fat_g: { type: "NUMBER", description: "Жири в грамах для всієї порції, строго більше 0" },
-            confidence: { type: "STRING" },
-            assumptions: { type: "STRING", description: "Опис припущень та розрахунків інгредієнтів" },
-            needs_clarification: { type: "BOOLEAN" },
-            clarification_question: { type: "STRING" }
-          },
-          required: ["name", "grams", "calories", "protein_g", "carbs_g", "fat_g"]
-        }
-      };
+      const geminiConfig = { responseMimeType: "application/json" };
+      let responseText = "";
 
       if (opts?.nameOnly) {
         const response = await fetch(url, {
@@ -197,7 +187,7 @@ function PhotoScan() {
             generationConfig: geminiConfig
           })
         });
-        if (!response.ok) throw new Error("Gemini Error");
+        if (!response.ok) throw new Error("Gemini API Error");
         const data = await response.json();
         responseText = data.candidates[0].content.parts[0].text;
       } else {
@@ -213,20 +203,25 @@ function PhotoScan() {
             generationConfig: geminiConfig
           })
         });
-        if (!response.ok) throw new Error("Gemini Error");
+        if (!response.ok) throw new Error("Gemini API Error");
         const data = await response.json();
         responseText = data.candidates[0].content.parts[0].text;
       }
 
-      const j = JSON.parse(responseText.trim()) as AnalyzeResult;
+      let cleanText = responseText.trim();
+      if (cleanText.startsWith("```")) {
+        cleanText = cleanText.replace(/^```json/, "").replace(/```$/, "").trim();
+      }
+
+      const j = JSON.parse(cleanText) as AnalyzeResult;
       setResult(j);
-      setGrams(Math.round(j.package_grams || j.grams) || 100);
+      setGrams(Math.round(j.grams) || 150);
       setHint("");
       setShowManual(false);
       setFavSaved(false);
     } catch (error) {
       console.error(error);
-      toast.error("Не вдалося розпізнати страву. Перевір ключ або інтернет.");
+      toast.error("Не вдалося розпізнати страву через прямий запит. Перевір лог консолі.");
     } finally {
       setAnalyzing(false);
     }
